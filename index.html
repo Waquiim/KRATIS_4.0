@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Viçosa/MG · KRATIS 4.0</title>
+  <meta name="description" content="Painel gerencial do Município de Viçosa/MG: dados abertos do SICONFI, comparação de três exercícios e possíveis apontamentos do TCE-MG.">
+  <meta name="theme-color" content="#1c3d6e">
+  <link rel="icon" href="assets/icone.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+  <a class="pular" href="#conteudo">Ir para o conteúdo</a>
+
+  <header class="topo">
+    <div class="marca">
+      <img class="marca-icone" src="assets/icone.svg" alt="" width="52" height="52">
+      <div class="marca-texto">
+        <p class="marca-nome" aria-label="KRATIS">KR<span class="lambda">Λ</span>T<span class="marca-i">I</span>S<span class="marca-versao">4.0</span></p>
+        <p class="marca-lema">Dados públicos a serviço de quem governa</p>
+      </div>
+      <div class="municipio">
+        <p class="municipio-rotulo">Painel fiscal do</p>
+        <h1 class="municipio-nome">Município de Viçosa <span>MG</span></h1>
+      </div>
+    </div>
+
+    <form class="controles" id="controles" autocomplete="off">
+      <label class="campo">Exercício
+        <select id="ano"></select>
+      </label>
+      <label class="campo">Bimestre de referência
+        <select id="bim"></select>
+      </label>
+      <label class="campo">Comparar com
+        <select id="modo">
+          <option value="periodo">Mesmo período dos anteriores</option>
+          <option value="fechado">Anteriores encerrados</option>
+        </select>
+      </label>
+      <button class="botao" type="button" id="atualizar" title="Buscar novamente no SICONFI">Atualizar dados</button>
+    </form>
+  </header>
+  <div class="grega" aria-hidden="true"></div>
+
+  <div class="faixa" id="faixa" aria-live="polite"></div>
+  <div class="progresso" id="progresso" hidden><div class="progresso-barra" id="progresso-barra"></div></div>
+
+  <nav class="abas" id="abas" aria-label="Seções do painel"></nav>
+
+  <main id="conteudo" tabindex="-1">
+    <p class="aviso aviso-info">Carregando o painel…</p>
+  </main>
+
+  <footer class="rodape">
+    <div class="grega" aria-hidden="true"></div>
+    <p><strong>KRATIS 4.0 · Município de Viçosa/MG</strong> · Fonte: <a href="https://apidatalake.tesouro.gov.br/docs/siconfi/" target="_blank" rel="noopener">API de dados abertos do SICONFI – Tesouro Nacional</a>.
+      Análises indicativas; não substituem a apuração oficial do Tribunal de Contas do Estado de Minas Gerais. <span id="obtido"></span></p>
+  </footer>
+
+  <noscript><p class="aviso aviso-critico">Este painel precisa de JavaScript para consultar o SICONFI.</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

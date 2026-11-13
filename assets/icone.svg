@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="KRATIS – pórtico de dados">
+  <defs>
+    <linearGradient id="vidro" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#eef4fb"/><stop offset="1" stop-color="#bfe0f3"/>
+    </linearGradient>
+    <radialGradient id="ouro-fundo" cx=".12" cy=".88" r=".5">
+      <stop offset="0" stop-color="#f6e6bd" stop-opacity=".9"/><stop offset="1" stop-color="#f6e6bd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="azul" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f8fdc"/><stop offset="1" stop-color="#1f4f9c"/>
+    </linearGradient>
+    <linearGradient id="bloco" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3f7fd0"/><stop offset=".5" stop-color="#1d4a94"/><stop offset="1" stop-color="#3f7fd0"/>
+    </linearGradient>
+    <linearGradient id="ouro" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6c56a"/><stop offset="1" stop-color="#c79a37"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="112" height="112" rx="31" fill="url(#vidro)" stroke="#a9c8ea" stroke-width="1.5"/>
+  <rect x="4" y="4" width="112" height="112" rx="31" fill="url(#ouro-fundo)"/>
+  <!-- frontão -->
+  <path d="M60 24 L94 45 H26 Z" fill="url(#azul)"/>
+  <path d="M60 27 L42 41 H36 Z" fill="#fff" opacity=".28"/>
+  <circle cx="60" cy="38" r="3.4" fill="url(#ouro)"/>
+  <rect x="26" y="47" width="68" height="5" rx="1.5" fill="#2459ad"/>
+  <!-- colunas de dados -->
+  <g>
+    <rect x="33" y="54.5" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+    <rect x="53" y="54.5" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+    <rect x="73" y="54.5" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+    <g stroke="#6fa3e0" stroke-width="1">
+      <rect x="35.5" y="58" width="9" height="5.6" rx="1.3" fill="#f3f8fe"/>
+      <rect x="35.5" y="64.8" width="9" height="5.6" rx="1.3" fill="#f3f8fe"/>
+      <rect x="55.5" y="58" width="9" height="5.6" rx="1.3" fill="#f3f8fe"/>
+    </g>
+    <g fill="url(#bloco)">
+      <rect x="35.5" y="71.6" width="9" height="5.6" rx="1.3"/><rect x="35.5" y="78.4" width="9" height="5.6" rx="1.3"/>
+      <rect x="55.5" y="64.8" width="9" height="5.6" rx="1.3"/><rect x="55.5" y="71.6" width="9" height="5.6" rx="1.3"/><rect x="55.5" y="78.4" width="9" height="5.6" rx="1.3"/>
+      <rect x="75.5" y="58" width="9" height="5.6" rx="1.3"/><rect x="75.5" y="64.8" width="9" height="5.6" rx="1.3"/><rect x="75.5" y="71.6" width="9" height="5.6" rx="1.3"/><rect x="75.5" y="78.4" width="9" height="5.6" rx="1.3"/>
+    </g>
+    <rect x="33" y="85.3" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+    <rect x="53" y="85.3" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+    <rect x="73" y="85.3" width="14" height="2.2" rx="1" fill="url(#ouro)"/>
+  </g>
+  <!-- degraus -->
+  <rect x="28" y="89" width="64" height="4" rx="1.2" fill="#2f69bd"/>
+  <rect x="23" y="94.5" width="74" height="4.5" rx="1.4" fill="#245bb0"/>
+</svg>
