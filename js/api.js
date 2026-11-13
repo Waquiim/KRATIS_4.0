@@ -137,17 +137,19 @@ async function baixarTudo(recurso, params) {
  * Consulta um recurso da API (todas as páginas). Devolve { itens, em, defasado }.
  * `em` é o instante em que os dados foram obtidos; `defasado` indica que a API falhou
  * e foi usado um resultado antigo do cache.
+ * Para respostas volumosas (MSC), `reduzir` transforma os itens antes de guardá-los: o cache e o
+ * retorno passam a conter só o resumo; `nome` identifica a versão desse resumo.
  */
-export function consultar(recurso, params = {}, { forcar = false } = {}) {
-  const chave = montarUrl(recurso, params, 0);
+export function consultar(recurso, params = {}, { forcar = false, reduzir = null, nome = '' } = {}) {
+  const chave = montarUrl(recurso, params, 0) + (reduzir ? '#' + nome : '');
   if (!forcar && memoria.has(chave)) return memoria.get(chave);
   const promessa = (async () => {
     const guardado = await lerCache(chave);
     if (guardado && !forcar && Date.now() - guardado.em < VALIDADE_MS) return { ...guardado, defasado: false };
     progresso.total++; avisar();
     try {
-      const itens = await baixarTudo(recurso, params);
-      const resultado = { itens, em: Date.now() };
+      const brutos = await baixarTudo(recurso, params);
+      const resultado = { itens: reduzir ? reduzir(brutos) : brutos, em: Date.now() };
       gravarCache(chave, resultado);
       return { ...resultado, defasado: false };
     } catch (erro) {

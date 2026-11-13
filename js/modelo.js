@@ -3,6 +3,7 @@
 
 import { consultar } from './api.js';
 import { MUNICIPIO } from './config.js';
+import { mscOrcamentaria, correntesESuperavit } from './fontes.js';
 
 export const norm = s => (s ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toUpperCase().replace(/\s+/g, ' ').trim();
@@ -80,6 +81,9 @@ export class Demo {
 }
 
 const DEMO_VAZIO = new Demo();
+
+/** A partir de 2023 as fontes de recursos seguem o padrão nacional (Portaria STN nº 710/2021). */
+export const ANO_FONTES_PADRONIZADAS = 2023;
 
 // ---------------------------------------------------------------- períodos e prazos
 
@@ -236,7 +240,22 @@ export async function carregarPacote({ ano, bim = null, forcar = false }) {
     dca[a] = new Demo(r.itens, a, { periodicidade: 'A', em: r.em, defasado: r.defasado });
   };
 
+  // 5. MSC (execução por fonte) dos períodos que entram na apuração do art. 167-A: permite excluir as
+  //    despesas correntes custeadas com superávit financeiro do exercício anterior.
+  const msc = {};
+  const pedirMSC = async (a, b) => {
+    const r = await mscOrcamentaria(a, b * 2, op);
+    (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r) };
+  };
+  const pedidosMSC = [];
+  for (const a of [ano, ano - 1, ano - 2, ano - 3]) {
+    if (a < ANO_FONTES_PADRONIZADAS) continue;
+    if (a !== ano - 3 || bimRef !== 6) pedidosMSC.push([a, bimRef]);
+    if (bimRef !== 6 && a !== ano) pedidosMSC.push([a, 6]);
+  }
+
   await Promise.all([
+    ...pedidosMSC.map(([a, b]) => pedirMSC(a, b)),
     ...pedidosRREO.map(([a, b, so]) => pedirRREO(a, b, so)),
     ...pedidosRGF.map(([a, m]) => pedirRGF(a, m)),
     ...anosDCA.map(pedirDCA),
@@ -251,7 +270,7 @@ export async function carregarPacote({ ano, bim = null, forcar = false }) {
 
   return {
     ente, ano, anos, bim: bimRef, semRREO, bimEntregues, extrato, avisos,
-    rreo, rgf, anosRGF, mesRGF, periodicidadeExec, dca, anosDCA,
+    rreo, rgf, anosRGF, mesRGF, periodicidadeExec, dca, anosDCA, msc, serieMSC: false,
     obtidoEm: instantes.length ? Math.min(...instantes) : null, defasado,
     serie167: null,
     /** RREO de um exercício: no modo "fechado" os anteriores vêm do 6º bimestre. */
@@ -295,4 +314,22 @@ export async function carregarSerieAnexo01(pacote, { forcar = false } = {}) {
   await Promise.all(tarefas);
   pacote.serie167 = serie;
   return serie;
+}
+
+/**
+ * MSC de todos os bimestres da série do art. 167-A (quatro exercícios). É uma carga volumosa, feita
+ * apenas quando a aba do art. 167-A é aberta.
+ */
+export async function carregarSerieMSC(pacote, { forcar = false } = {}) {
+  const { ano, bimEntregues, msc } = pacote;
+  const tarefas = [];
+  for (const a of [ano, ano - 1, ano - 2, ano - 3]) {
+    if (a < ANO_FONTES_PADRONIZADAS) continue;
+    for (const b of a === ano ? bimEntregues[a] : [1, 2, 3, 4, 5, 6]) {
+      if (msc[a]?.[b]) continue;
+      tarefas.push(mscOrcamentaria(a, b * 2, { forcar }).then(r => { (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r) }; }));
+    }
+  }
+  await Promise.all(tarefas);
+  pacote.serieMSC = true;
 }

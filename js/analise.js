@@ -74,17 +74,33 @@ export function execucao(d) {
 function demoDe(p, ano, bim) { return p.serie167?.[ano]?.[bim] || p.rreo[ano]?.[bim] || null; }
 
 /**
+ * Despesas correntes da MSC de (ano, bimestre), com a parcela custeada por superávit financeiro.
+ * Só é usada quando a MSC existe e seu total de despesas correntes liquidadas confere com o RREO;
+ * MSC ausente, incompleta ou divergente não entra no cálculo.
+ */
+function superavitDe(p, ano, bim) {
+  const m = p.msc?.[ano]?.[bim], e = execucao(demoDe(p, ano, bim));
+  if (!m || !m.tem || !e || vazio(e.dcLiqTot)) return null;
+  if (Math.abs(m.totLiq - e.dcLiqTot) > Math.max(1, Math.abs(e.dcLiqTot) * 0.005)) return null;
+  return m;
+}
+
+/**
  * Relação despesas correntes / receitas correntes em 12 meses (CF/88, art. 167-A), pela
- * metodologia do TCE-MG (IN nº 07/2025): despesas liquidadas nos 12 meses + empenhadas e não
- * liquidadas inscritas em RPNP em dezembro; receitas correntes líquidas de deduções;
- * intraorçamentárias dos dois lados.
+ * metodologia do TCE-MG (Consulta nº 1.160.617 e IN nº 07/2025): despesas liquidadas nos 12 meses +
+ * empenhadas e não liquidadas inscritas em RPNP em dezembro, excluídas as custeadas com superávit
+ * financeiro do exercício anterior; receitas correntes líquidas de deduções; intraorçamentárias
+ * dos dois lados. A exclusão do superávit depende da MSC (fonte de recursos); quando ela não está
+ * disponível para todo o período, `ajustado` é falso e a relação fica sem a exclusão.
  */
 export function relacao167(p, ano, bim) {
   const at = execucao(demoDe(p, ano, bim));
   if (!at || vazio(at.rcTot) || vazio(at.dcLiqTot)) return null;
-  let rc, liq, emp, rpnp, origemRpnp;
+  let rc, liq, emp, rpnp, origemRpnp, sup = null;
   if (bim === 6) {
     rc = at.rcTot; liq = at.dcLiqTot; emp = at.dcEmpTot; rpnp = at.dcRpnpTot; origemRpnp = ano;
+    const s = superavitDe(p, ano, 6);
+    if (s) sup = { liq: s.supLiq, rpnp: Math.max(0, s.supEmp - s.supLiq) };
   } else {
     const fim = execucao(demoDe(p, ano - 1, 6)), ant = execucao(demoDe(p, ano - 1, bim));
     if (!fim || !ant || vazio(fim.rcTot) || vazio(ant.rcTot)) return null;
@@ -92,17 +108,22 @@ export function relacao167(p, ano, bim) {
     liq = at.dcLiqTot + fim.dcLiqTot - ant.dcLiqTot;
     emp = at.dcEmpTot + fim.dcEmpTot - ant.dcEmpTot;
     rpnp = fim.dcRpnpTot; origemRpnp = ano - 1;
+    const sa = superavitDe(p, ano, bim), sf = superavitDe(p, ano - 1, 6), sb = superavitDe(p, ano - 1, bim);
+    if (sa && sf && sb) sup = { liq: sa.supLiq + sf.supLiq - sb.supLiq, rpnp: Math.max(0, sf.supEmp - sf.supLiq) };
   }
   if (!rc) return null;
-  const dc = liq + (rpnp || 0);
-  return { ano, bim, rc, liq, emp, rpnp: rpnp || 0, origemRpnp, dc,
-    pct: dc / rc * 100, pctLiq: liq / rc * 100, pctEmp: emp / rc * 100, poupanca: rc - dc };
+  const dcBruta = liq + (rpnp || 0);
+  const exclusao = sup ? sup.liq + sup.rpnp : 0;
+  const dc = dcBruta - exclusao;
+  return { ano, bim, rc, liq, emp, rpnp: rpnp || 0, origemRpnp, dcBruta, sup, exclusao, ajustado: !!sup, dc,
+    pct: dc / rc * 100, pctSemExclusao: dcBruta / rc * 100, pctLiq: liq / rc * 100, pctEmp: emp / rc * 100, poupanca: rc - dc };
 }
 
 /**
  * Projeção da relação em dezembro, pela sazonalidade do exercício anterior: receitas e despesas
  * liquidadas crescem até o fim do ano na mesma proporção de então, e os RPNP de dezembro mantêm
- * a mesma proporção sobre a despesa liquidada.
+ * a mesma proporção sobre a despesa liquidada. A despesa custeada com superávit é projetada pelo
+ * ritmo que ela própria teve no exercício anterior.
  */
 export function projecao167(p, ano, bim) {
   if (bim === 6) return null;
@@ -111,8 +132,15 @@ export function projecao167(p, ano, bim) {
   const rc = at.rcTot * fim.rcTot / ant.rcTot;
   const liq = at.dcLiqTot * fim.dcLiqTot / ant.dcLiqTot;
   const rpnp = liq * (fim.dcRpnpTot || 0) / fim.dcLiqTot;
-  const dc = liq + rpnp;
-  return { rc, liq, rpnp, dc, pct: dc / rc * 100 };
+  const dcBruta = liq + rpnp;
+  const sa = superavitDe(p, ano, bim), sf = superavitDe(p, ano - 1, 6), sb = superavitDe(p, ano - 1, bim);
+  let exclusao = null;
+  if (sa && sf && sb) {
+    const ritmo = sb.supLiq > 0 && sf.supEmp / sb.supLiq < 10 ? sf.supEmp / sb.supLiq : dcBruta / at.dcLiqTot;
+    exclusao = sa.supLiq * ritmo;
+  }
+  const dc = dcBruta - (exclusao || 0);
+  return { rc, liq, rpnp, dcBruta, exclusao, ajustado: exclusao !== null, dc, pct: dc / rc * 100, pctSemExclusao: dcBruta / rc * 100 };
 }
 
 /** Série da relação por bimestre para os três exercícios (requer a série do Anexo 01). */
@@ -336,21 +364,25 @@ export function apontamentos(p, hoje = new Date()) {
       let sev = r.pct >= 95 ? 'critico' : r.pct >= 85 ? 'alto' : 'ok';
       let tendencia = null;
       if (proj) {
-        tendencia = `Mantida a sazonalidade de ${ano - 1}, a relação projetada para dezembro de ${ano} é de ${pct(proj.pct)}.`;
+        tendencia = `Mantida a sazonalidade de ${ano - 1}, a relação projetada para dezembro de ${ano} é de ${pct(proj.pct)}`
+          + (proj.ajustado ? ` (${pct(proj.pctSemExclusao)} sem a exclusão do superávit).` : ', sem a exclusão do superávit.');
         if (sev === 'ok' && proj.pct >= 95) sev = 'medio';
         else if (sev === 'ok' && proj.pct >= 85) sev = 'baixo';
       }
+      const base = `${pct(r.pct)} nos 12 meses encerrados no ${perRREO(ano, bim)}: despesas correntes consideradas de ${moedaCurta(r.dc)} para receitas correntes de ${moedaCurta(r.rc)}.`;
+      const exclusao = r.ajustado
+        ? ` Já excluídos ${moedaCurta(r.exclusao)} de despesas custeadas com superávit financeiro do exercício anterior; sem a exclusão, a relação seria de ${pct(r.pctSemExclusao)}.`
+        : ' A exclusão das despesas custeadas com superávit financeiro não pôde ser feita: a MSC de algum mês do período não foi enviada ao SICONFI ou diverge do RREO. O percentual está, portanto, superestimado.';
       add({ id: 'L1', grupo: GRUPOS[0], titulo: 'Relação despesas correntes / receitas correntes (art. 167-A)', sev,
-        resultado: `${pct(r.pct)} nos 12 meses encerrados no ${perRREO(ano, bim)} (despesas correntes de ${moedaCurta(r.dc)} para receitas correntes de ${moedaCurta(r.rc)}).`
-          + (rAnt ? ` No mesmo período de ${ano - 1}: ${pct(rAnt.pct)} (${pp(r.pct - rAnt.pct)}).` : ''),
+        resultado: base + exclusao + (rAnt ? ` No mesmo período de ${ano - 1}: ${pct(rAnt.pct)} (${pp(r.pct - rAnt.pct)})${rAnt.ajustado === r.ajustado ? '' : ', em base diferente quanto à exclusão do superávit'}.` : ''),
         tendencia, referencia: 'Alerta: 85% (§ 1º) · Limite: 95% (caput)',
         fundamento: 'CF/88, art. 167-A (EC nº 109/2021); TCE-MG, Consulta nº 1.160.617 e Instrução Normativa nº 07/2025.',
         recomendacao: r.pct >= 95
           ? 'Acima de 95%: avaliar a adoção dos mecanismos de ajuste fiscal do art. 167-A (vedação a reajustes, criação de cargos, admissões, concursos, novas despesas obrigatórias, benefícios tributários etc.). Enquanto as medidas não forem adotadas por todos os Poderes e órgãos, ficam vedadas a concessão de garantias por outro ente e a contratação de operações de crédito com outro ente (§ 6º).'
           : r.pct >= 85 ? 'Entre 85% e 95%: as medidas do art. 167-A podem ser adotadas, no todo ou em parte, por ato do Chefe do Executivo com vigência imediata, submetido ao Legislativo em regime de urgência (§§ 1º e 2º). Conter o crescimento das despesas correntes obrigatórias.'
             : 'Manter o acompanhamento bimestral da relação e a declaração exigida pelo § 6º do art. 167-A.',
-        metodologia: 'Base móvel de 12 meses com o RREO Anexo 01: despesas correntes liquidadas (inclusive intraorçamentárias) + despesas empenhadas e não liquidadas inscritas em RPNP em dezembro, divididas pelas receitas correntes realizadas, líquidas de deduções (inclusive intraorçamentárias). O SICONFI não detalha a despesa por fonte; por isso não é feita a exclusão das despesas custeadas com superávit financeiro do exercício anterior, admitida pelo TCE-MG – o percentual exibido é conservador.',
-        fonte: 'RREO – Anexo 01', aba: 'art167' });
+        metodologia: 'Base móvel de 12 meses. Do RREO Anexo 01: despesas correntes liquidadas (inclusive intraorçamentárias) + despesas empenhadas e não liquidadas inscritas em RPNP em dezembro, e receitas correntes realizadas, líquidas de deduções (inclusive intraorçamentárias). Da Matriz de Saldos Contábeis: despesas correntes custeadas com recursos de exercícios anteriores (fontes cujo primeiro dígito é 2), que correspondem aos créditos abertos com superávit financeiro e são excluídas, como admite o TCE-MG. A exclusão só é aplicada quando a MSC de todos os meses envolvidos existe e confere com o RREO. Não são abatidos os RPNP cancelados, que o SICONFI não detalha por categoria.',
+        fonte: 'RREO – Anexo 01; MSC', aba: 'art167' });
     }
   }
 

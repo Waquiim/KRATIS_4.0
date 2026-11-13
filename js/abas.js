@@ -1,13 +1,14 @@
 // Abas do painel. Cada aba recebe o elemento de conteúdo e o contexto { p, estado, ir, redesenhar }.
 
 import { consultar } from './api.js';
-import { MESES, BIMESTRES, NOME_PODER, rotuloPeriodoRGF, norm } from './modelo.js';
+import { MESES, BIMESTRES, NOME_PODER, rotuloPeriodoRGF, norm, carregarSerieMSC } from './modelo.js';
 import {
   A1, A3, A6, COL, LIMITES, FUNCOES, SEVERIDADES, GRUPOS,
   indicadores, apontamentos, contagemSeveridades, relacao167, projecao167, serie167, entregas, execucao,
 } from './analise.js';
 import { moeda, moedaCurta, pct, pp, numero, variacao, pctVariacao, data, dataHora, vazio, esc } from './formato.js';
 import { selo, cartao, medidor, tabelaComparativa, linhasDoAnexo, graficoBarras, graficoLinhas, aviso, secao, CORES_SERIE } from './ui.js';
+import { GRUPOS_FONTE, ORIGENS_RECEITA, GRUPOS_DESPESA, grupoDaFonte, nomeDaFonte, nomeDoOrgao, nomeDaSubfuncao, execucaoPorFonte, somarPor, filtroAtivo } from './fontes.js';
 
 export const ABAS = [
   { id: 'visao', nome: 'Visão geral' },
@@ -69,7 +70,7 @@ function visao(el, { p, estado }) {
   const sevDe = id => aps.find(x => x.id === id)?.sev || null;
   const pes = i => i.pessoal.find(x => x.poder === 'E');
   const cartoes = [
-    cartao({ titulo: 'Despesa corrente / receita corrente (art. 167-A)', tipo: 'pct', valores: [a.r167?.pct, b.r167?.pct, c.r167?.pct], rotulos: r, sev: sevDe('L1'), nota: '12 meses · alerta 85% · limite 95%', aba: 'art167' }),
+    cartao({ titulo: 'Despesa corrente / receita corrente (art. 167-A)', tipo: 'pct', valores: [a.r167?.pct, b.r167?.pct, c.r167?.pct], rotulos: r, sev: sevDe('L1'), nota: `12 meses · alerta 85% · limite 95%${a.r167?.ajustado ? ' · superávit excluído' : ''}`, aba: 'art167' }),
     cartao({ titulo: 'Receita realizada', valores: [a.exec?.recReal, b.exec?.recReal, c.exec?.recReal], rotulos: r, sev: sevDe('E2'), nota: a.exec ? `${pct(a.exec.recReal / a.exec.recPrev * 100, 1)} da previsão atualizada` : '', aba: 'receitas' }),
     cartao({ titulo: 'Despesa empenhada', valores: [a.exec?.emp, b.exec?.emp, c.exec?.emp], rotulos: r, nota: a.exec ? `${pct(a.exec.emp / a.exec.dot * 100, 1)} da dotação atualizada` : '', aba: 'despesas' }),
     cartao({ titulo: 'Resultado da execução orçamentária', valores: [a.exec?.resultado, b.exec?.resultado, c.exec?.resultado], rotulos: r, sev: sevDe('E1'), nota: 'receitas realizadas − despesas empenhadas', aba: 'despesas' }),
@@ -140,20 +141,23 @@ function abaApontamentos(el, { p, estado }) {
 
 // ---------------------------------------------------------------- art. 167-A
 
-function art167(el, { p, estado }) {
-  const m = estado.modo;
+function art167(el, ctx) {
+  const { p, estado } = ctx, m = estado.modo;
   const rs = p.anos.map(a => relacao167(p, a, p.bimDe(a, m)));
   const [ra] = rs, proj = projecao167(p, p.ano, p.bim);
   const cab = cabRREO(p, m);
   const v = f => rs.map(r => r ? f(r) : null);
+  const semAjuste = p.anos.filter((a, i) => rs[i] && !rs[i].ajustado);
   const tabela = tabelaComparativa({
     cabecalhos: cab, primeira: 'Componente (12 meses)',
     linhas: [
       linha('Receitas correntes realizadas, inclusive intraorçamentárias (A)', v(r => r.rc), { forte: true }),
       linha('Despesas correntes liquidadas, inclusive intraorçamentárias (B)', v(r => r.liq)),
       linha('Despesas correntes inscritas em RPNP em dezembro (C)', v(r => r.rpnp), { nota: 'empenhadas e não liquidadas' }),
-      linha('Despesas correntes consideradas (D = B + C)', v(r => r.dc), { forte: true }),
+      linha('(−) Despesas correntes custeadas com superávit financeiro do exercício anterior (E)', v(r => r.ajustado ? r.exclusao : null), { nota: 'fontes de exercícios anteriores, conforme a MSC' }),
+      linha('Despesas correntes consideradas (D = B + C − E)', v(r => r.dc), { forte: true }),
       linha('Relação despesa corrente / receita corrente (D ÷ A) – metodologia TCE-MG', v(r => r.pct), { tipo: 'pct', forte: true }),
+      linha('Relação sem a exclusão do superávit ((B + C) ÷ A)', v(r => r.pctSemExclusao), { tipo: 'pct' }),
       linha('Relação receita corrente / despesa corrente (A ÷ D)', v(r => r.rc / r.dc * 100), { tipo: 'pct' }),
       linha('Poupança corrente (A − D)', v(r => r.poupanca)),
       { secao: 'Outras leituras da mesma relação' },
@@ -166,14 +170,21 @@ function art167(el, { p, estado }) {
   const sev = !ra ? 'nd' : ra.pct >= 95 ? 'critico' : ra.pct >= 85 ? 'alto' : 'ok';
   const heroi = `<div class="heroi">
       <div class="heroi-valor"><span class="heroi-numero">${ra ? pct(ra.pct) : '—'}</span>${selo(sev, !ra ? 'Sem dados' : ra.pct >= 95 ? 'Acima do limite de 95%' : ra.pct >= 85 ? 'Acima do alerta de 85%' : 'Abaixo de 85%')}
-        <p>Despesas correntes sobre receitas correntes nos 12 meses encerrados no ${p.bim}º bimestre de ${p.ano}.</p></div>
+        <p>Despesas correntes sobre receitas correntes nos 12 meses encerrados no ${p.bim}º bimestre de ${p.ano}${ra?.ajustado ? `, já excluídos ${moedaCurta(ra.exclusao)} custeados com superávit financeiro. Sem a exclusão: ${pct(ra.pctSemExclusao)}.` : '.'}</p></div>
       <div class="heroi-medidor">${medidor({ valor: ra?.pct, marcos: [{ valor: 85, rotulo: 'Alerta' }, { valor: 95, rotulo: 'Limite' }], maximo: Math.max(110, (ra?.pct || 0) * 1.05), rotulo: 'Relação DC/RC' })}
-        ${proj ? `<p class="heroi-projecao"><strong>Projeção para dezembro de ${p.ano}: ${pct(proj.pct)}</strong> (despesas correntes de ${moedaCurta(proj.dc)} para receitas correntes de ${moedaCurta(proj.rc)}, mantida a sazonalidade de ${p.ano - 1}).</p>` : ''}</div>
+        ${proj ? `<p class="heroi-projecao"><strong>Projeção para dezembro de ${p.ano}: ${pct(proj.pct)}</strong> (despesas correntes consideradas de ${moedaCurta(proj.dc)} para receitas correntes de ${moedaCurta(proj.rc)}, mantida a sazonalidade de ${p.ano - 1}${proj.ajustado ? `; sem a exclusão do superávit, ${pct(proj.pctSemExclusao)}` : '; sem a exclusão do superávit'}).</p>` : ''}</div>
     </div>`;
+  const avisoAjuste = semAjuste.length
+    ? aviso(`<strong>Exclusão do superávit não aplicada em ${semAjuste.join(' e ')}.</strong> A Matriz de Saldos Contábeis de algum mês desse período não foi enviada ao SICONFI, está incompleta ou diverge do RREO. Nessas colunas a relação aparece sem a exclusão e fica superestimada; a comparação com os exercícios ajustados fica prejudicada.`, 'alerta')
+    : '';
 
+  // A série bimestral precisa do Anexo 01 e da MSC de quatro exercícios; a MSC é carregada só nesta aba.
+  if (!p.serieMSC && !p.carregandoSerieMSC) {
+    p.carregandoSerieMSC = carregarSerieMSC(p).finally(() => { if (estado.aba === 'art167') ctx.redesenhar(); });
+  }
   let blocoSerie;
-  if (!p.serie167) {
-    blocoSerie = aviso('Carregando a série bimestral dos quatro últimos exercícios…', 'info');
+  if (!p.serie167 || !p.serieMSC) {
+    blocoSerie = aviso('Carregando a série bimestral dos quatro últimos exercícios (RREO e Matriz de Saldos Contábeis). Na primeira vez pode levar cerca de um minuto…', 'info');
   } else {
     const s = serie167(p);
     const grafico = graficoLinhas({
@@ -181,25 +192,126 @@ function art167(el, { p, estado }) {
       series: s.map(x => ({ nome: String(x.ano), valores: x.pontos.map(r => r?.pct ?? null) })),
       refs: [{ valor: 85, rotulo: 'Alerta 85%', classe: 'medio' }, { valor: 95, rotulo: 'Limite 95%', classe: 'critico' }],
     });
+    const semExclusao = s.some(x => x.pontos.some(r => r && !r.ajustado));
     const corpo = [1, 2, 3, 4, 5, 6].map(b => `<tr><th scope="row">${b}º bimestre</th>${s.map(x => {
       const r = x.pontos[b - 1];
-      return `<td>${r ? `${pct(r.pct)} ${r.pct >= 95 ? selo('critico', '> 95%') : r.pct >= 85 ? selo('alto', '> 85%') : ''}` : '—'}</td><td class="menor">${r ? moedaCurta(r.dc) : '—'}</td><td class="menor">${r ? moedaCurta(r.rc) : '—'}</td>`;
+      return `<td>${r ? `${pct(r.pct)}${r.ajustado ? '' : ' *'} ${r.pct >= 95 ? selo('critico', '> 95%') : r.pct >= 85 ? selo('alto', '> 85%') : ''}` : '—'}</td><td class="menor">${r ? pct(r.pctSemExclusao) : '—'}</td><td class="menor">${r?.ajustado ? moedaCurta(r.exclusao) : '—'}</td>`;
     }).join('')}</tr>`).join('');
     blocoSerie = `${grafico}<div class="tabela-rolagem"><table class="tabela"><thead>
         <tr><th rowspan="2" scope="col">Apuração</th>${s.map((x, i) => `<th colspan="3" scope="colgroup"><span class="marca-serie" style="background:${CORES_SERIE[i]}"></span>${x.ano}</th>`).join('')}</tr>
-        <tr>${s.map(() => '<th scope="col">DC/RC</th><th scope="col">Desp. correntes</th><th scope="col">Rec. correntes</th>').join('')}</tr></thead>
-      <tbody>${corpo}</tbody></table></div>`;
+        <tr>${s.map(() => '<th scope="col">DC/RC</th><th scope="col">Sem exclusão</th><th scope="col">Superávit excluído</th>').join('')}</tr></thead>
+      <tbody>${corpo}</tbody></table></div>
+      ${semExclusao ? aviso('* Apuração sem a exclusão do superávit: a MSC do período não foi localizada no SICONFI, está incompleta ou diverge do RREO.', 'info') : ''}`;
   }
 
   el.innerHTML = `
-    ${secao('Art. 167-A da Constituição – despesas correntes × receitas correntes', heroi + tabela, notaModo(p, m))}
+    ${secao('Art. 167-A da Constituição – despesas correntes × receitas correntes', heroi + avisoAjuste + tabela, notaModo(p, m))}
     ${secao('Evolução bimestral', blocoSerie, 'A apuração é bimestral, sobre base móvel de 12 meses (CF/88, art. 167-A, § 4º).')}
     ${secao('O que a Constituição determina', `<div class="texto">
       <p><strong>Acima de 95%</strong> (caput): é facultado aos Poderes Executivo, Legislativo e Judiciário, ao Ministério Público, ao Tribunal de Contas e à Defensoria Pública aplicar o mecanismo de ajuste fiscal, que veda, entre outros: concessão de vantagem, aumento ou reajuste de remuneração; criação de cargo, emprego ou função que implique aumento de despesa; alteração de estrutura de carreira; admissão ou contratação de pessoal (salvo reposições); realização de concurso (salvo reposições); criação ou majoração de auxílios e benefícios; criação de despesa obrigatória; reajuste de despesa obrigatória acima da inflação; criação ou expansão de linhas de financiamento, subsídios e subvenções; concessão ou ampliação de incentivo ou benefício tributário.</p>
       <p><strong>Entre 85% e 95%</strong> (§ 1º): as medidas podem ser implementadas, no todo ou em parte, por ato do Chefe do Poder Executivo com vigência imediata, submetido em regime de urgência ao Legislativo.</p>
       <p><strong>Consequência prática</strong> (§ 6º): ocorrendo a hipótese do caput, até que todas as medidas tenham sido adotadas por todos os Poderes e órgãos, ficam vedadas a concessão, por outro ente, de garantias ao ente envolvido e a tomada de operação de crédito com outro ente, inclusive refinanciamentos. O TCE-MG disciplinou a apuração e a declaração correspondente na Instrução Normativa nº 07/2025.</p>
-      <p class="sub"><strong>Metodologia aplicada.</strong> RREO Anexo 01 em base móvel de 12 meses: valor acumulado no exercício até o bimestre + valor do exercício anterior encerrado − valor do exercício anterior até o mesmo bimestre. Despesas correntes liquidadas somadas às empenhadas e não liquidadas inscritas em RPNP em dezembro (do exercício anterior, nas apurações de janeiro a outubro; do próprio exercício, na de dezembro); receitas correntes realizadas, líquidas de deduções; intraorçamentárias dos dois lados. Limitações: o SICONFI não informa a despesa por fonte, de modo que não se exclui a despesa custeada com superávit financeiro do exercício anterior, nem se abatem os RPNP cancelados – o percentual exibido tende a ser igual ou superior ao da apuração oficial.</p></div>`)}`;
+      <p class="sub"><strong>Metodologia aplicada.</strong> Base móvel de 12 meses: valor acumulado no exercício até o bimestre + valor do exercício anterior encerrado − valor do exercício anterior até o mesmo bimestre. Do RREO Anexo 01 vêm as despesas correntes liquidadas, somadas às empenhadas e não liquidadas inscritas em RPNP em dezembro (do exercício anterior, nas apurações de janeiro a outubro; do próprio exercício, na de dezembro), e as receitas correntes realizadas, líquidas de deduções; as intraorçamentárias entram dos dois lados. Da Matriz de Saldos Contábeis vêm as despesas correntes custeadas com recursos de exercícios anteriores (fontes cujo primeiro dígito é 2), correspondentes aos créditos abertos com superávit financeiro, que são excluídas conforme o entendimento do TCE-MG (Consulta nº 1.160.617). A exclusão só é aplicada quando a MSC de todos os meses envolvidos existe e seu total confere com o RREO. Limitação remanescente: não se abatem os RPNP cancelados no exercício, que o SICONFI não detalha por categoria de despesa.</p></div>`)}`;
 }
+
+// ---------------------------------------------------------------- filtro por fonte de recursos
+
+const filtroFontes = estado => (estado.fontes ||= { sel: null, exerc: 'todos', aberto: false });
+
+function cabMSC(p, pf) {
+  return p.anos.map(a => ({ titulo: String(a), sub: pf.anos[a]?.tem ? `até ${MESES[pf.anos[a].mes - 1]}.` : 'MSC não enviada' }));
+}
+
+const ROTULO_EXERC = { todos: 'recursos do exercício e de exercícios anteriores', 1: 'somente recursos do exercício corrente', 2: 'somente recursos de exercícios anteriores' };
+
+/** Painel de seleção das fontes (lista com caixas de marcar, agrupada pela natureza da vinculação). */
+function painelFontes(pf, f) {
+  const todas = pf.fontes, marcada = c => !f.sel || f.sel.has(c);
+  const qtd = f.sel ? todas.filter(marcada).length : todas.length;
+  const resumo = (qtd === todas.length ? `Todas as ${todas.length} fontes` : qtd === 0 ? 'Nenhuma fonte selecionada' : `${qtd} de ${todas.length} fontes selecionadas`)
+    + (f.exerc !== 'todos' ? ` · ${ROTULO_EXERC[f.exerc]}` : '');
+  const selecionadas = f.sel && qtd > 0 && qtd <= 8 ? `<span class="filtro-chips">${todas.filter(marcada).map(c => `<span class="filtro-chip" title="${esc(nomeDaFonte(c))}">${c}</span>`).join('')}</span>` : '';
+  const grupos = GRUPOS_FONTE.map(g => {
+    const cods = todas.filter(c => grupoDaFonte(c).id === g.id);
+    if (!cods.length) return '';
+    const n = cods.filter(marcada).length;
+    return `<fieldset class="filtro-grupo">
+      <legend><label><input type="checkbox" data-fonte-grupo="${g.id}" ${n === cods.length ? 'checked' : ''} ${n > 0 && n < cods.length ? 'data-parcial' : ''}> ${esc(g.nome)}</label></legend>
+      ${cods.map(c => `<label class="filtro-item"><input type="checkbox" data-fonte="${c}" ${marcada(c) ? 'checked' : ''}><span class="filtro-cod">${c}</span><span>${esc(nomeDaFonte(c))}</span></label>`).join('')}
+    </fieldset>`;
+  }).join('');
+  return `<details class="filtro-fontes" data-filtro-fontes ${f.aberto ? 'open' : ''}>
+    <summary><span class="filtro-titulo">Fontes de recursos</span><span class="filtro-resumo">${esc(resumo)}</span>${selecionadas}<span class="filtro-acao">${filtroAtivo(f) ? 'Alterar seleção' : 'Selecionar fontes'}</span></summary>
+    <div class="filtro-corpo">
+      <div class="barra-acoes">
+        <label>Exercício do recurso <select data-fonte-exerc>
+          <option value="todos" ${f.exerc === 'todos' ? 'selected' : ''}>Todos</option>
+          <option value="1" ${f.exerc === '1' ? 'selected' : ''}>Do exercício corrente</option>
+          <option value="2" ${f.exerc === '2' ? 'selected' : ''}>De exercícios anteriores (superávit financeiro)</option></select></label>
+        <button type="button" class="botao" data-fonte-acao="todas">Marcar todas</button>
+        <button type="button" class="botao" data-fonte-acao="nenhuma">Desmarcar todas</button>
+        ${filtroAtivo(f) ? '<button type="button" class="botao botao-primario" data-fonte-acao="limpar">Limpar filtro</button>' : ''}
+      </div>
+      <div class="filtro-grupos">${grupos}</div>
+    </div></details>`;
+}
+
+/** Liga os eventos do painel de fontes; qualquer mudança redesenha a aba. */
+function ligarPainelFontes(el, pf, f, redesenhar) {
+  const painel = el.querySelector('[data-filtro-fontes]');
+  if (!painel) return;
+  const todas = pf.fontes;
+  const aplicar = (conjunto, foco) => {
+    f.sel = conjunto.size === todas.length ? null : conjunto;
+    f.aberto = true; f.foco = foco;
+    redesenhar();
+  };
+  const atual = () => new Set(f.sel ? [...f.sel] : todas);
+  painel.addEventListener('toggle', () => { f.aberto = painel.open; });
+  painel.querySelectorAll('[data-parcial]').forEach(c => { c.indeterminate = true; });
+  painel.querySelectorAll('[data-fonte]').forEach(c => c.addEventListener('change', () => {
+    const conj = atual(); c.checked ? conj.add(c.dataset.fonte) : conj.delete(c.dataset.fonte);
+    aplicar(conj, `[data-fonte="${c.dataset.fonte}"]`);
+  }));
+  painel.querySelectorAll('[data-fonte-grupo]').forEach(c => c.addEventListener('change', () => {
+    const conj = atual();
+    todas.filter(x => grupoDaFonte(x).id === c.dataset.fonteGrupo).forEach(x => c.checked ? conj.add(x) : conj.delete(x));
+    aplicar(conj, `[data-fonte-grupo="${c.dataset.fonteGrupo}"]`);
+  }));
+  painel.querySelector('[data-fonte-exerc]').addEventListener('change', ev => { f.exerc = ev.target.value; f.aberto = true; f.foco = '[data-fonte-exerc]'; redesenhar(); });
+  el.querySelectorAll('[data-fonte-acao]').forEach(b => b.addEventListener('click', () => {
+    const acao = b.dataset.fonteAcao;
+    if (acao === 'limpar') { f.sel = null; f.exerc = 'todos'; f.aberto = false; f.foco = null; redesenhar(); return; }
+    aplicar(acao === 'todas' ? new Set(todas) : new Set(), `[data-fonte-acao="${acao}"]`);
+  }));
+  if (f.foco) { el.querySelector(f.foco)?.focus({ preventScroll: true }); f.foco = null; }
+}
+
+/** Linhas "por fonte" (agrupadas pela vinculação) para a tabela comparativa. */
+function linhasPorFonte(pf, p, f, tipo, campo) {
+  const mapas = p.anos.map(a => somarPor(pf.anos[a]?.[tipo] || [], f, x => x.fonte, campo));
+  const tem = p.anos.map(a => pf.anos[a]?.tem);
+  const val = (i, c) => tem[i] ? (mapas[i].get(c) ?? (f.sel && !f.sel.has(c) ? null : 0)) : null;
+  const linhas = [];
+  for (const g of GRUPOS_FONTE) {
+    const cods = pf.fontes.filter(c => grupoDaFonte(c).id === g.id && (!f.sel || f.sel.has(c)) && mapas.some(mp => Math.abs(mp.get(c) || 0) > 0.004));
+    if (!cods.length) continue;
+    linhas.push({ secao: g.nome });
+    cods.forEach(c => linhas.push(linha(`${c} – ${nomeDaFonte(c)}`, p.anos.map((_, i) => val(i, c)))));
+    if (cods.length > 1) linhas.push(linha(`Subtotal – ${g.nome.toLowerCase()}`, p.anos.map((_, i) => tem[i] ? cods.reduce((t, c) => t + (mapas[i].get(c) || 0), 0) : null), { forte: true }));
+  }
+  const total = p.anos.map((_, i) => tem[i] ? [...mapas[i].values()].reduce((t, v) => t + v, 0) : null);
+  linhas.push({ secao: 'Total' }, linha(filtroAtivo(f) ? 'Total das fontes selecionadas' : 'Total de todas as fontes', total, { forte: true }));
+  return { linhas, total };
+}
+
+function avisosMSC(pf, p) {
+  const faltam = p.anos.filter(a => !pf.anos[a]?.tem);
+  return (faltam.length ? aviso(`A MSC de ${faltam.map(a => `${MESES[(pf.anos[a]?.mes || 12) - 1]}./${a}`).join(' e ')} não foi localizada no SICONFI; a coluna correspondente fica vazia.`, 'alerta') : '')
+    + (pf.erro ? aviso(`Falha ao consultar a MSC: ${esc(pf.erro)}`, 'critico') : '');
+}
+
+const NOTA_FONTE = 'Valores da Matriz de Saldos Contábeis (MSC) enviada ao SICONFI, que identifica a fonte de cada lançamento. Sem filtro, o total coincide com o do RREO.';
 
 // ---------------------------------------------------------------- receitas
 
@@ -219,8 +331,38 @@ const RECEITAS = [
   ['TotalReceitas', 'Total das receitas', 0, true],
 ];
 
-function receitas(el, { p, estado }) {
-  const m = estado.modo, demos = p.anos.map(a => p.demoRREO(a, m)), ind = tres(p, m), r = rot(p);
+function receitas(el, ctx) {
+  const { p, estado } = ctx, m = estado.modo, demos = p.anos.map(a => p.demoRREO(a, m)), ind = tres(p, m), r = rot(p);
+  const f = filtroFontes(estado), pf = execucaoPorFonte(p, m);
+  if (!pf.pronto) pf.promessa.then(() => { if (estado.aba === 'receitas') ctx.redesenhar(); });
+
+  // ---- por fonte de recursos (MSC)
+  let blocoFontes;
+  if (!pf.pronto) {
+    blocoFontes = secao('Receita por fonte de recursos', aviso('Carregando as receitas por fonte de recursos (Matriz de Saldos Contábeis)…', 'info'));
+  } else {
+    const cab = cabMSC(p, pf), porFonte = linhasPorFonte(pf, p, f, 'receitas', 'valor');
+    const origem = p.anos.map(a => somarPor(pf.anos[a].receitas, f, x => x.origem));
+    const tem = p.anos.map(a => pf.anos[a].tem);
+    const vOrigem = cod => p.anos.map((_, i) => tem[i] ? origem[i].get(cod) || 0 : null);
+    const vFaixa = d => p.anos.map((_, i) => tem[i] ? [...origem[i]].filter(([k]) => k[0] === d).reduce((t, [, v]) => t + v, 0) : null);
+    const comValor = l => l.valores.some(v => Math.abs(v || 0) > 0.004);
+    const linhasOrigem = [
+      linha('Receitas correntes', vFaixa('1'), { forte: true }),
+      ...Object.entries(ORIGENS_RECEITA).filter(([k]) => k[0] === '1').map(([k, n]) => linha(n, vOrigem(k), { nivel: 1 })).filter(comValor),
+      linha('Receitas de capital', vFaixa('2'), { forte: true }),
+      ...Object.entries(ORIGENS_RECEITA).filter(([k]) => k[0] === '2').map(([k, n]) => linha(n, vOrigem(k), { nivel: 1 })).filter(comValor),
+      linha('Receitas intraorçamentárias correntes', vFaixa('7'), { forte: true }),
+      linha('Receitas intraorçamentárias de capital', vFaixa('8'), { forte: true }),
+    ].filter(comValor);
+    linhasOrigem.push(linha(filtroAtivo(f) ? 'Total das fontes selecionadas' : 'Total das receitas', porFonte.total, { forte: true }));
+    blocoFontes = secao('Receita realizada por fonte de recursos', painelFontes(pf, f) + avisosMSC(pf, p)
+        + tabelaComparativa({ cabecalhos: cab, linhas: porFonte.linhas, primeira: 'Fonte de recursos – receita realizada, líquida de deduções' }), NOTA_FONTE)
+      + secao(filtroAtivo(f) ? 'Receita por origem – fontes selecionadas' : 'Receita por origem – todas as fontes',
+        tabelaComparativa({ cabecalhos: cab, linhas: linhasOrigem, primeira: 'Origem da receita' }));
+  }
+
+  // ---- demonstrativo sem detalhe de fonte (RREO)
   const monta = col => RECEITAS.map(([cod, nome, nivel, forte]) => linha(nome, demos.map(d => d.v(A1, cod, col)), { nivel, forte }))
     .filter(l => l.valores.some(v => !vazio(v)));
   const realiz = RECEITAS.map(([cod, nome, nivel, forte]) => linha(nome, demos.map(d => {
@@ -237,11 +379,15 @@ function receitas(el, { p, estado }) {
     const proj = e.rc * fim.rc / mesmo.rc;
     projecao = aviso(`<strong>Projeção das receitas correntes para o encerramento de ${p.ano}:</strong> ${moeda(proj)}, ou ${pct(proj / e.rcPrev * 100, 1)} da previsão atualizada (${moeda(e.rcPrev)}). Em ${p.ano - 1}, até o ${p.bim}º bimestre havia sido arrecadado ${pct(mesmo.rc / fim.rc * 100, 1)} do total do ano.`, proj / e.rcPrev < 0.95 ? 'alerta' : 'info');
   }
-  el.innerHTML = `
-    ${secao('Receitas realizadas', projecao + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: monta(COL.real), primeira: 'Origem' }) + grafico, notaModo(p, m))}
-    ${secao('Realização da previsão atualizada', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: realiz, primeira: 'Origem (realizado ÷ previsão atualizada)' }),
-      'Percentuais muito baixos em receitas de capital e operações de crédito sinalizam superestimativa orçamentária (LRF, art. 12).')}
-    ${secao('Previsão atualizada', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: monta(COL.prev), primeira: 'Origem' }))}`;
+  const blocoRREO = filtroAtivo(f)
+    ? aviso('Há um filtro de fontes aplicado. As tabelas do RREO (previsão, realização e gráfico por origem) não têm detalhamento por fonte e ficam ocultas enquanto o filtro estiver ativo. <button type="button" class="botao" data-fonte-acao="limpar">Limpar filtro</button>', 'info')
+    : secao('Receitas realizadas – RREO', projecao + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: monta(COL.real), primeira: 'Origem' }) + grafico, notaModo(p, m))
+      + secao('Realização da previsão atualizada', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: realiz, primeira: 'Origem (realizado ÷ previsão atualizada)' }),
+        'Percentuais muito baixos em receitas de capital e operações de crédito sinalizam superestimativa orçamentária (LRF, art. 12).')
+      + secao('Previsão atualizada', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: monta(COL.prev), primeira: 'Origem' }));
+
+  el.innerHTML = blocoFontes + blocoRREO;
+  if (pf.pronto) ligarPainelFontes(el, pf, f, ctx.redesenhar);
 }
 
 // ---------------------------------------------------------------- despesas
@@ -258,35 +404,102 @@ const ESTAGIOS = { emp: ['Empenhada', COL.emp], liq: ['Liquidada', COL.liq], pag
 function despesas(el, ctx) {
   const { p, estado } = ctx, m = estado.modo, demos = p.anos.map(a => p.demoRREO(a, m)), ind = tres(p, m), r = rot(p);
   const est = estado.estagio || 'liq', [nomeEst, colEst] = ESTAGIOS[est];
-  const porGrupo = DESPESAS.map(([cod, nome, nivel, forte]) => linha(nome, demos.map(d => d.v(A1, cod, colEst)), { nivel, forte })).filter(l => l.valores.some(v => !vazio(v)));
-  const exec = ind.map(i => i.exec);
-  const resumo = [
-    linha('Dotação atualizada', exec.map(e => e?.dot)), linha('Despesa empenhada', exec.map(e => e?.emp), { forte: true }),
-    linha('Despesa liquidada', exec.map(e => e?.liq)), linha('Despesa paga', exec.map(e => e?.pago)),
-    linha('Empenhado ÷ dotação', exec.map(e => e ? e.emp / e.dot * 100 : null), { tipo: 'pct1' }),
-    linha('Liquidado ÷ empenhado', exec.map(e => e ? e.liq / e.emp * 100 : null), { tipo: 'pct1' }),
-    linha('Receita realizada − despesa empenhada', exec.map(e => e?.resultado), { forte: true }),
-    linha('Superávit financeiro usado em créditos adicionais', exec.map(e => e?.superavitFin)),
-    linha('Investimentos ÷ despesa total (liquidada)', exec.map(e => e && e.liq ? (e.invLiq || 0) / e.liq * 100 : null), { tipo: 'pct1' }),
-  ];
-  const campo = est === 'emp' ? 'emp' : 'liq';
-  const funcoes = FUNCOES.map(f => ({ f, valores: ind.map(i => i.funcoes[f]?.[campo] ?? null) }))
-    .filter(x => x.valores.some(v => v)).sort((x, y) => (y.valores[0] ?? y.valores[1] ?? 0) - (x.valores[0] ?? x.valores[1] ?? 0));
-  const totais = ind.map(i => Object.values(i.funcoes).reduce((s, x) => s + (x[campo] || 0), 0) || null);
-  const tabFuncoes = [...funcoes.map(x => linha(x.f, x.valores)), linha('Total (exceto intraorçamentárias)', totais, { forte: true })];
-  const partic = funcoes.slice(0, 12).map(x => linha(x.f, x.valores.map((v, k) => totais[k] ? (v || 0) / totais[k] * 100 : null), { tipo: 'pct1' }));
-  const top = funcoes.slice(0, 8);
-  const grafico = graficoBarras({ titulo: `Despesa ${campo === 'emp' ? 'empenhada' : 'liquidada'} por função – oito maiores`, categorias: top.map(x => x.f.replace('Assistência Social', 'Assist. Social').replace('Encargos Especiais', 'Enc. Especiais').replace('Previdência Social', 'Previdência')),
-    series: r.map((nome, k) => ({ nome, valores: top.map(x => x.valores[k]) })) });
-  el.innerHTML = `
-    ${secao('Execução da despesa', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: resumo, primeira: 'Indicador' }), notaModo(p, m))}
-    ${secao('Despesa por categoria econômica e grupo', `<div class="barra-acoes"><label>Estágio <select data-estagio>${Object.entries(ESTAGIOS).map(([k, [n]]) => `<option value="${k}" ${k === est ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>`
-      + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: porGrupo, primeira: `Grupo – despesa ${nomeEst.toLowerCase()}` }))}
-    ${secao('Despesa por função', grafico + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: tabFuncoes, primeira: `Função – despesa ${campo === 'emp' ? 'empenhada' : 'liquidada'}` }),
-      'RREO Anexo 02, exceto intraorçamentárias.')}
-    ${secao('Participação de cada função na despesa', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: partic, primeira: 'Função (% do total)' })
-      + aviso('Os índices constitucionais de educação (CF, art. 212 – 25%) e de saúde (LC nº 141/2012 – 15%) são apurados no SIOPE e no SIOPS e não são publicados na API do SICONFI. A despesa nas funções Educação e Saúde acima é informação gerencial e não equivale a esses índices.', 'info'))}`;
-  el.querySelector('[data-estagio]').addEventListener('change', ev => { estado.estagio = ev.target.value; despesas(el, ctx); });
+  const f = filtroFontes(estado), pf = execucaoPorFonte(p, m);
+  if (!pf.pronto) pf.promessa.then(() => { if (estado.aba === 'despesas') ctx.redesenhar(); });
+  // estágio usado nas tabelas da MSC (a dotação não tem detalhe por fonte nessas contas)
+  const campo = est === 'pago' ? 'pago' : est === 'emp' ? 'emp' : 'liq';
+  const nomeCampo = { emp: 'empenhada', liq: 'liquidada', pago: 'paga' }[campo];
+  const seletorEstagio = `<div class="barra-acoes"><label>Estágio da despesa <select data-estagio>${Object.entries(ESTAGIOS).map(([k, [n]]) => `<option value="${k}" ${k === est ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>`;
+
+  // ---- por fonte, órgão, função e subfunção (MSC)
+  let blocoFontes;
+  if (!pf.pronto) {
+    blocoFontes = secao('Despesa por fonte de recursos', aviso('Carregando as despesas por fonte de recursos (Matriz de Saldos Contábeis)…', 'info'));
+  } else {
+    const cab = cabMSC(p, pf), porFonte = linhasPorFonte(pf, p, f, 'despesas', campo);
+    const tem = p.anos.map(a => pf.anos[a].tem);
+    const somar = chaveDe => p.anos.map(a => somarPor(pf.anos[a].despesas, f, chaveDe, campo));
+    const valores = (mapas, k) => p.anos.map((_, i) => tem[i] ? mapas[i].get(k) || 0 : null);
+    const comValor = l => l.valores.some(v => Math.abs(v || 0) > 0.004);
+    const sufixo = filtroAtivo(f) ? 'fontes selecionadas' : 'todas as fontes';
+    const linhaTotal = linha(filtroAtivo(f) ? 'Total das fontes selecionadas' : 'Total das despesas', porFonte.total, { forte: true });
+
+    // categoria econômica e grupo
+    const grupo = somar(x => x.grupo), intra = somar(x => x.modalidade === '91' ? 'intra' : 'demais');
+    const faixa = d => p.anos.map((_, i) => tem[i] ? [...grupo[i]].filter(([k]) => k[0] === d).reduce((t, [, v]) => t + v, 0) : null);
+    const linhasGrupo = [
+      linha('Despesas correntes', faixa('3'), { forte: true }),
+      ...Object.entries(GRUPOS_DESPESA).filter(([k]) => k[0] === '3').map(([k, n]) => linha(n, valores(grupo, k), { nivel: 1 })).filter(comValor),
+      linha('Despesas de capital', faixa('4'), { forte: true }),
+      ...Object.entries(GRUPOS_DESPESA).filter(([k]) => k[0] === '4').map(([k, n]) => linha(n, valores(grupo, k), { nivel: 1 })).filter(comValor),
+      linhaTotal,
+      linha('das quais: intraorçamentárias (modalidade 91)', valores(intra, 'intra'), { nivel: 1 }),
+    ].filter(comValor);
+
+    // órgão
+    const orgao = somar(x => x.orgao);
+    const orgaos = [...new Set(orgao.flatMap(mp => [...mp.keys()]))].sort();
+    const linhasOrgao = [...orgaos.map(o => linha(nomeDoOrgao(o), valores(orgao, o))).filter(comValor), linhaTotal];
+
+    // função e subfunção
+    const funcao = somar(x => x.funcao), sub = somar(x => `${x.funcao}.${x.subfuncao}`);
+    const ordem = k => -(funcao[0].get(k) ?? funcao[1].get(k) ?? funcao[2].get(k) ?? 0);
+    const funcoes = [...new Set(funcao.flatMap(mp => [...mp.keys()]))].sort((a, b) => ordem(a) - ordem(b));
+    const subs = [...new Set(sub.flatMap(mp => [...mp.keys()]))];
+    const linhasFuncao = [];
+    for (const fu of funcoes) {
+      const lf = linha(`${fu} – ${FUNCOES[Number(fu) - 1] || 'Função ' + fu}`, valores(funcao, fu), { forte: true });
+      if (!comValor(lf)) continue;
+      linhasFuncao.push(lf);
+      subs.filter(k => k.startsWith(fu + '.')).sort((a, b) => (sub[0].get(b) || 0) - (sub[0].get(a) || 0))
+        .map(k => linha(`${k} – ${nomeDaSubfuncao(k.split('.')[1])}`, valores(sub, k), { nivel: 1 })).filter(comValor).forEach(l => linhasFuncao.push(l));
+    }
+    linhasFuncao.push(linhaTotal);
+
+    blocoFontes = secao('Despesa por fonte de recursos', painelFontes(pf, f) + seletorEstagio + avisosMSC(pf, p)
+        + tabelaComparativa({ cabecalhos: cab, linhas: porFonte.linhas, primeira: `Fonte de recursos – despesa ${nomeCampo}` }),
+        NOTA_FONTE + (est === 'dot' ? ' A dotação não é detalhada por fonte; as tabelas desta seção mostram a despesa liquidada.' : ''))
+      + secao(`Despesa por órgão – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasOrgao, primeira: `Órgão – despesa ${nomeCampo}` })
+        + aviso('<strong>Sobre a despesa por Secretaria (unidade orçamentária):</strong> o SICONFI não publica esse detalhamento. O nível mais fino que o Tesouro divulga é o órgão (Prefeitura, RPPS e Câmara) e, dentro dele, a função e a subfunção de governo, mostradas na tabela seguinte – Saúde, Educação, Assistência Social e as demais áreas correspondem, em linhas gerais, às secretarias. A despesa por unidade orçamentária consta apenas do SICOM/TCE-MG e do sistema contábil da Prefeitura.', 'info'))
+      + secao(`Despesa por função e subfunção – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasFuncao, primeira: `Função e subfunção – despesa ${nomeCampo}` }),
+        'Inclui as despesas intraorçamentárias. Cada função reúne as ações de uma área de governo.')
+      + secao(`Despesa por categoria econômica e grupo – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasGrupo, primeira: `Grupo – despesa ${nomeCampo}` }));
+  }
+
+  // ---- demonstrativo sem detalhe de fonte (RREO)
+  let blocoRREO;
+  if (filtroAtivo(f)) {
+    blocoRREO = aviso('Há um filtro de fontes aplicado. As tabelas do RREO (execução, grupos e funções) não têm detalhamento por fonte e ficam ocultas enquanto o filtro estiver ativo. <button type="button" class="botao" data-fonte-acao="limpar">Limpar filtro</button>', 'info');
+  } else {
+    const porGrupo = DESPESAS.map(([cod, nome, nivel, forte]) => linha(nome, demos.map(d => d.v(A1, cod, colEst)), { nivel, forte })).filter(l => l.valores.some(v => !vazio(v)));
+    const exec = ind.map(i => i.exec);
+    const resumo = [
+      linha('Dotação atualizada', exec.map(e => e?.dot)), linha('Despesa empenhada', exec.map(e => e?.emp), { forte: true }),
+      linha('Despesa liquidada', exec.map(e => e?.liq)), linha('Despesa paga', exec.map(e => e?.pago)),
+      linha('Empenhado ÷ dotação', exec.map(e => e ? e.emp / e.dot * 100 : null), { tipo: 'pct1' }),
+      linha('Liquidado ÷ empenhado', exec.map(e => e ? e.liq / e.emp * 100 : null), { tipo: 'pct1' }),
+      linha('Receita realizada − despesa empenhada', exec.map(e => e?.resultado), { forte: true }),
+      linha('Superávit financeiro usado em créditos adicionais', exec.map(e => e?.superavitFin)),
+      linha('Investimentos ÷ despesa total (liquidada)', exec.map(e => e && e.liq ? (e.invLiq || 0) / e.liq * 100 : null), { tipo: 'pct1' }),
+    ];
+    const campoRreo = est === 'emp' ? 'emp' : 'liq';
+    const funcoes = FUNCOES.map(fu => ({ f: fu, valores: ind.map(i => i.funcoes[fu]?.[campoRreo] ?? null) }))
+      .filter(x => x.valores.some(v => v)).sort((x, y) => (y.valores[0] ?? y.valores[1] ?? 0) - (x.valores[0] ?? x.valores[1] ?? 0));
+    const totais = ind.map(i => Object.values(i.funcoes).reduce((t, x) => t + (x[campoRreo] || 0), 0) || null);
+    const partic = funcoes.slice(0, 12).map(x => linha(x.f, x.valores.map((v, k) => totais[k] ? (v || 0) / totais[k] * 100 : null), { tipo: 'pct1' }));
+    const top = funcoes.slice(0, 8);
+    const grafico = graficoBarras({ titulo: `Despesa ${campoRreo === 'emp' ? 'empenhada' : 'liquidada'} por função – oito maiores`, categorias: top.map(x => x.f.replace('Assistência Social', 'Assist. Social').replace('Encargos Especiais', 'Enc. Especiais').replace('Previdência Social', 'Previdência')),
+      series: r.map((nome, k) => ({ nome, valores: top.map(x => x.valores[k]) })) });
+    blocoRREO = secao('Execução da despesa – RREO', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: resumo, primeira: 'Indicador' }), notaModo(p, m))
+      + secao('Despesa por categoria econômica e grupo – RREO', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: porGrupo, primeira: `Grupo – ${est === 'dot' ? 'dotação atualizada' : 'despesa ' + nomeEst.toLowerCase()}` }),
+        'RREO Anexo 01, exceto intraorçamentárias (mostradas em linha própria).')
+      + secao('Participação de cada função na despesa', grafico + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: partic, primeira: 'Função (% do total, exceto intraorçamentárias)' })
+        + aviso('Os índices constitucionais de educação (CF, art. 212 – 25%) e de saúde (LC nº 141/2012 – 15%) são apurados no SIOPE e no SIOPS e não são publicados na API do SICONFI. A despesa nas funções Educação e Saúde é informação gerencial e não equivale a esses índices.', 'info'));
+  }
+
+  el.innerHTML = blocoFontes + blocoRREO;
+  el.querySelector('[data-estagio]')?.addEventListener('change', ev => { estado.estagio = ev.target.value; despesas(el, ctx); });
+  if (pf.pronto) ligarPainelFontes(el, pf, f, ctx.redesenhar);
 }
 
 // ---------------------------------------------------------------- RCL
@@ -586,11 +799,15 @@ function sobre(el, { p }) {
       <p>Todos os valores vêm, em tempo real, da <a href="https://apidatalake.tesouro.gov.br/docs/siconfi/" target="_blank" rel="noopener">API de dados abertos do SICONFI</a> (Sistema de Informações Contábeis e Fiscais do Setor Público Brasileiro), mantida pela Secretaria do Tesouro Nacional. Este painel é exclusivo do <strong>Município de Viçosa/MG</strong> (código IBGE 3171303): mostra os demonstrativos declarados e homologados pela Prefeitura e pela Câmara Municipal – RREO, RGF, DCA, MSC e extrato de entregas. O painel não altera os valores – apenas os organiza, compara e confronta com os limites legais.</p>
       <p>As consultas ficam guardadas no navegador por 12 horas para acelerar a navegação. Use <strong>Atualizar dados</strong> para buscar novamente no SICONFI.</p>
       <p>Dados deste carregamento obtidos em ${dataHora(p.obtidoEm)}${p.defasado ? ' (parte veio do cache local porque a API não respondeu)' : ''}.</p></div>`)
+    + secao('Receitas e despesas por fonte de recursos', `<div class="texto">
+      <p>O RREO e o RGF não informam a fonte de recursos. Nas abas <strong>Receitas</strong> e <strong>Despesas</strong>, o filtro de fontes usa a Matriz de Saldos Contábeis (MSC) do mês que encerra o bimestre de referência, na qual cada lançamento traz a fonte, o órgão, a função e a subfunção. Sem filtro, os totais da MSC coincidem com os do RREO.</p>
+      <p>As fontes seguem a tabela padronizada da Portaria STN nº 710/2021 (consolidada até a Portaria STN/MF nº 1.701/2025). O primeiro dígito do código informado na MSC separa os recursos do exercício corrente dos recursos de exercícios anteriores (superávit financeiro), e também pode ser filtrado.</p>
+      <p>O SICONFI não publica a despesa por unidade orçamentária (Secretaria). O maior detalhe institucional disponível é o órgão – Prefeitura, RPPS e Câmara – e, dentro dele, a função e a subfunção de governo.</p></div>`)
     + secao('Comparação entre exercícios', `<div class="texto">
       <p>Cada aba compara o exercício selecionado com os dois anteriores. No modo <strong>mesmo período</strong>, os três exercícios são lidos no mesmo bimestre (RREO) e no mesmo quadrimestre ou semestre (RGF). No modo <strong>anteriores encerrados</strong>, o exercício atual é comparado com o fechamento (6º bimestre / último período) dos anteriores.</p>
       <p>A DCA é anual: enquanto a do exercício selecionado não é entregue, a aba Balanço anual compara os três últimos balanços disponíveis. O RGF Anexo 05 (disponibilidade de caixa) só existe no último período de cada exercício.</p></div>`)
     + secao('Regras dos apontamentos', `<div class="tabela-rolagem"><table class="tabela tabela-texto"><thead><tr><th>Verificação</th><th>Critério</th><th>Fundamento</th></tr></thead><tbody>
-      <tr><th>Despesa corrente / receita corrente</th><td>12 meses; despesas liquidadas + RPNP de dezembro; alerta a 85% e limite a 95%; projeção para dezembro</td><td>CF/88, art. 167-A; TCE-MG, IN nº 07/2025</td></tr>
+      <tr><th>Despesa corrente / receita corrente</th><td>12 meses; despesas liquidadas + RPNP de dezembro, excluídas as custeadas com superávit financeiro; alerta a 85% e limite a 95%; projeção para dezembro</td><td>CF/88, art. 167-A; TCE-MG, IN nº 07/2025</td></tr>
       <tr><th>Despesa com pessoal</th><td>Percentual e limites declarados no RGF Anexo 01 de cada Poder/órgão; tendência de 12 meses</td><td>LRF, arts. 19 a 23 e 59</td></tr>
       <tr><th>Dívida, operações de crédito e garantias</th><td>120% da RCL; 16%; 22%</td><td>Resoluções SF nº 40 e 43/2001</td></tr>
       <tr><th>Regra de ouro</th><td>Operações de crédito × despesas de capital</td><td>CF/88, art. 167, III</td></tr>
@@ -606,7 +823,7 @@ function sobre(el, { p }) {
     + secao('Limitações', `<div class="texto"><ul>
       <li>As análises são <strong>indicativas</strong> e não substituem a apuração oficial do TCE-MG, que utiliza o SICOM e documentos que não estão no SICONFI.</li>
       <li>Os índices de educação (25%), FUNDEB e saúde (15%) são apurados no SIOPE e no SIOPS e não constam da API do SICONFI.</li>
-      <li>O SICONFI não detalha a despesa por fonte de recursos nos demonstrativos fiscais; por isso a relação do art. 167-A não exclui as despesas custeadas com superávit financeiro do exercício anterior.</li>
+      <li>A exclusão das despesas custeadas com superávit financeiro, no art. 167-A, depende da Matriz de Saldos Contábeis: quando a MSC de algum mês não foi enviada, está incompleta ou diverge do RREO, a relação é mostrada sem a exclusão, com aviso. Os restos a pagar não processados cancelados não são abatidos.</li>
       <li>A meta de resultado primário da LDO e o limite de gastos do Legislativo (CF, art. 29-A) dependem de dados que não estão na API.</li>
       <li>O extrato de entregas traz a data do último status, não a da primeira homologação.</li></ul></div>`);
 }

@@ -43,8 +43,8 @@ Abrir o `index.html` direto do disco não funciona: o navegador exige um endere�
 | Visão geral | Indicadores-chave dos três exercícios e resumo dos apontamentos | RREO, RGF |
 | Apontamentos TCE-MG | Possíveis apontamentos por severidade, com fundamento, orientação e tendência; exporta CSV e PDF | todos |
 | **Art. 167-A** | Relação despesa corrente / receita corrente em 12 meses, série bimestral, projeção para dezembro | RREO Anexo 01 |
-| Receitas | Realizado, previsão e realização por origem; projeção de encerramento | RREO Anexo 01 |
-| Despesas | Execução por grupo e por função | RREO Anexos 01 e 02 |
+| Receitas | **Filtro por fonte de recursos**; receita por fonte e por origem; previsão, realização e projeção de encerramento | MSC; RREO Anexo 01 |
+| Despesas | **Filtro por fonte de recursos**; despesa por fonte, por órgão (Prefeitura, RPPS, Câmara), por função e subfunção e por grupo | MSC; RREO Anexos 01 e 02 |
 | RCL | Receita corrente líquida e composição | RREO Anexo 03 |
 | Pessoal | Despesa com pessoal da Prefeitura e da Câmara frente aos limites | RGF Anexo 01 |
 | Dívida e crédito | DCL, operações de crédito, garantias, regra de ouro | RGF Anexos 02 a 04 |
@@ -66,13 +66,15 @@ pela metodologia do TCE-MG (Instrução Normativa nº 07/2025):
 
 - **despesas correntes** liquidadas nos 12 meses, somadas às empenhadas e não liquidadas inscritas em restos a pagar
   não processados em dezembro;
+- **excluídas** as despesas correntes custeadas com superávit financeiro do exercício anterior (fontes de recursos
+  de exercícios anteriores, identificadas na Matriz de Saldos Contábeis);
 - **receitas correntes** realizadas, líquidas de deduções;
 - receitas e despesas **intraorçamentárias** consideradas dos dois lados;
 - alerta a **85%** (§ 1º) e limite a **95%** (caput).
 
-Limitação: os demonstrativos fiscais do SICONFI não trazem a despesa por fonte de recursos, de modo que o painel não
-exclui as despesas custeadas com superávit financeiro do exercício anterior nem abate os RPNP cancelados. O percentual
-exibido é, portanto, igual ou superior ao da apuração oficial.
+A exclusão do superávit só é aplicada quando a MSC de todos os meses envolvidos existe e confere com o RREO; caso
+contrário, a relação é mostrada sem a exclusão, com aviso. Os RPNP cancelados não são abatidos, porque o SICONFI não os
+detalha por categoria de despesa.
 
 ## Possíveis apontamentos
 
@@ -93,6 +95,8 @@ a trajetória de 12 meses da despesa com pessoal.
 - As análises são indicativas e não substituem a apuração oficial do TCE-MG, que usa o SICOM e documentos que não
   estão no SICONFI.
 - Os índices de educação (25%), FUNDEB e saúde (15%) são apurados no SIOPE e no SIOPS e não constam da API.
+- A despesa por unidade orçamentária (Secretaria) não é publicada no SICONFI; o painel mostra a despesa por órgão,
+  função e subfunção.
 - A meta de resultado primário da LDO e o limite de gastos do Legislativo (CF, art. 29-A) dependem de dados fora da API.
 - O extrato de entregas informa a data do último status, não a da primeira homologação.
 - O painel mostra o que o Município declarou. Erros de preenchimento aparecem como estão — e alguns são apontados na
@@ -108,6 +112,7 @@ js/config.js                      identificação do Município (código IBGE 31
 js/api.js                         acesso à API: fila, repetição, paginação e cache local de 12 horas
 js/modelo.js                      demonstrativos consultáveis e carga dos três exercícios
 js/analise.js                     indicadores, art. 167-A, projeções e regras dos apontamentos
+js/fontes.js                      receitas e despesas por fonte de recursos, órgão, função e subfunção (MSC)
 js/ui.js                          tabelas comparativas, cartões, medidores e gráficos (SVG)
 js/abas.js                        as quinze abas
 js/app.js                         controles, navegação e arranque
