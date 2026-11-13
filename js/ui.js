@@ -43,6 +43,34 @@ export function cartao({ titulo, valores, rotulos, tipo = 'curta', sev = null, n
   </article>`;
 }
 
+/**
+ * Cartão de índice com meta legal: mostra o percentual, uma barra com o marco do mínimo (ou do máximo)
+ * e a comparação com os dois exercícios anteriores. sentido: 'minimo' ou 'maximo'.
+ */
+export function cartaoMeta({ titulo, valores, rotulos, meta, sentido = 'minimo', rotuloMeta = null, sev = 'nd', textoSelo = null, nota = '', aba = null }) {
+  const [v0, v1, v2] = valores;
+  const temValor = !vazio(v0);
+  const teto = Math.max(temValor ? v0 : 0, meta) * (sentido === 'minimo' ? 1.3 : 1.12) || 1;
+  const pos = v => Math.max(0, Math.min(100, v / teto * 100));
+  const classe = { critico: 'critico', alto: 'alto', medio: 'medio' }[sev] || 'ok';
+  const folga = temValor ? (sentido === 'minimo' ? v0 - meta : meta - v0) : null;
+  const legenda = `${rotuloMeta || (sentido === 'minimo' ? 'Mínimo' : 'Limite')} ${pct(meta, meta % 1 ? 1 : 0)}`
+    + (temValor ? ` · ${folga >= 0 ? (sentido === 'minimo' ? 'acima em ' : 'folga de ') : (sentido === 'minimo' ? 'abaixo em ' : 'excesso de ')}${numero(Math.abs(folga))} p.p.` : '');
+  return `<article class="cartao cartao-meta"${aba ? ` data-ir="${aba}" tabindex="0" role="link"` : ''}>
+    <header><h3>${esc(titulo)}</h3>${selo(sev, textoSelo)}</header>
+    <p class="cartao-valor">${formatar(v0, 'pct')}</p>
+    <div class="meta" role="img" aria-label="${esc(titulo)}: ${formatar(v0, 'pct')}; ${esc(legenda)}">
+      <div class="meta-trilho">${temValor ? `<div class="medidor-barra medidor-${classe}" style="width:${pos(v0)}%"></div>` : ''}<span class="medidor-marco" style="left:${pos(meta)}%"></span></div>
+      <p class="meta-legenda">${esc(legenda)}</p>
+    </div>
+    <dl class="cartao-comparativo">
+      <div><dt>${esc(rotulos[1])}</dt><dd>${formatar(v1, 'pct')} <span class="delta">${delta(v0, v1, 'pct')}</span></dd></div>
+      <div><dt>${esc(rotulos[2])}</dt><dd>${formatar(v2, 'pct')} <span class="delta">${delta(v0, v2, 'pct')}</span></dd></div>
+    </dl>
+    ${nota ? `<p class="cartao-nota">${nota}</p>` : ''}
+  </article>`;
+}
+
 /** Barra de medição de um percentual frente a limites: marcos = [{valor, rotulo}]. */
 export function medidor({ valor, marcos = [], maximo = null, rotulo = '' }) {
   if (vazio(valor)) return '<div class="medidor medidor-vazio">sem dados</div>';

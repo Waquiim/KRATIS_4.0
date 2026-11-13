@@ -260,6 +260,14 @@ main:focus { outline: none; }
 .cartao-comparativo dt { color: var(--tinta-3); }
 .cartao-comparativo dd { margin: 0; color: var(--tinta-2); }
 .cartao-nota { font-size: 12px; color: var(--tinta-3); }
+.grade-cartoes-largos { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+.cartao-meta .meta { display: grid; gap: 6px; }
+.meta-trilho { position: relative; height: 10px; border-radius: 4px; background: var(--azul-claro); }
+.meta-trilho .medidor-barra { height: 100%; border-radius: 4px; }
+.meta-trilho .medidor-marco { top: -4px; bottom: -4px; }
+.meta-legenda { font-size: 12px; color: var(--tinta-2); }
+.memoria { margin-top: 14px; }
+.memoria > summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--azul); padding: 4px 0; }
 .delta { color: var(--tinta-3); font-size: .92em; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- herói e medidor */

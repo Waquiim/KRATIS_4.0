@@ -7,7 +7,7 @@ import {
   indicadores, apontamentos, contagemSeveridades, relacao167, projecao167, serie167, entregas, execucao,
 } from './analise.js';
 import { moeda, moedaCurta, pct, pp, numero, variacao, pctVariacao, data, dataHora, vazio, esc } from './formato.js';
-import { selo, cartao, medidor, tabelaComparativa, linhasDoAnexo, graficoBarras, graficoLinhas, aviso, secao, CORES_SERIE } from './ui.js';
+import { selo, cartao, cartaoMeta, medidor, tabelaComparativa, linhasDoAnexo, graficoBarras, graficoLinhas, aviso, secao, CORES_SERIE } from './ui.js';
 import { GRUPOS_FONTE, ORIGENS_RECEITA, GRUPOS_DESPESA, grupoDaFonte, nomeDaFonte, nomeDoOrgao, nomeDaSubfuncao, execucaoPorFonte, somarPor, filtroAtivo } from './fontes.js';
 
 export const ABAS = [
@@ -69,13 +69,59 @@ function visao(el, { p, estado }) {
   const aps = apontamentos(p), cont = contagemSeveridades(aps);
   const sevDe = id => aps.find(x => x.id === id)?.sev || null;
   const pes = i => i.pessoal.find(x => x.poder === 'E');
+  const leg = i => i.pessoal.find(x => x.poder === 'L');
+  const rg = p.anosRGF.map(String), mn = [a, b, c].map(i => i.minimos);
+  const seloMinimo = sev => ({ ok: 'Acima do mínimo', baixo: 'Próximo do mínimo', medio: 'Abaixo do mínimo', critico: 'Abaixo do mínimo', nd: 'Sem dados' }[sev]);
+  const seloMaximo = sev => ({ ok: 'Dentro do limite', baixo: 'Em alta', medio: 'Acima do alerta', alto: 'Acima do prudencial', critico: 'Acima do limite', nd: 'Sem dados' }[sev]);
+  const estagio = mn[0] ? `despesa ${mn[0].estagio}` : 'MSC não disponível';
+  const sv = id => sevDe(id) || 'nd';
+  const constitucionais = [
+    cartaoMeta({ titulo: 'Educação – manutenção e desenvolvimento do ensino', valores: mn.map(x => x?.mde.pct), rotulos: r, meta: 25, sev: mn[0] ? sv('M1') : 'nd', textoSelo: seloMinimo(mn[0] ? sv('M1') : 'nd'),
+      nota: `CF, art. 212 · ${estagio} + FUNDEB · estimativa`, aba: 'apontamentos' }),
+    cartaoMeta({ titulo: 'Saúde – ações e serviços públicos de saúde', valores: mn.map(x => x?.asps.pct), rotulos: r, meta: 15, sev: mn[0] ? sv('M2') : 'nd', textoSelo: seloMinimo(mn[0] ? sv('M2') : 'nd'),
+      nota: `LC nº 141/2012 · ${estagio} · estimativa`, aba: 'apontamentos' }),
+    cartaoMeta({ titulo: 'FUNDEB – remuneração dos profissionais da educação', valores: mn.map(x => x?.fundeb?.pct), rotulos: r, meta: 70, sev: mn[0]?.fundeb ? sv('M3') : 'nd', textoSelo: seloMinimo(mn[0]?.fundeb ? sv('M3') : 'nd'),
+      nota: `CF, art. 212-A, XI · ${estagio} · estimativa`, aba: 'apontamentos' }),
+    cartaoMeta({ titulo: 'Pessoal – Poder Executivo', valores: [pes(a)?.pct, pes(b)?.pct, pes(c)?.pct], rotulos: rg, meta: pes(a)?.maximo.pct ?? 54, sentido: 'maximo', rotuloMeta: 'Limite máximo',
+      sev: pes(a) ? sv('L2-E') : 'nd', textoSelo: seloMaximo(pes(a) ? sv('L2-E') : 'nd'), nota: 'LRF, art. 20, III, "b" · % da RCL ajustada · alerta 48,6% · prudencial 51,3%', aba: 'pessoal' }),
+    cartaoMeta({ titulo: 'Pessoal – Poder Legislativo', valores: [leg(a)?.pct, leg(b)?.pct, leg(c)?.pct], rotulos: rg, meta: leg(a)?.maximo.pct ?? 6, sentido: 'maximo', rotuloMeta: 'Limite máximo',
+      sev: leg(a) ? sv('L2-L') : 'nd', textoSelo: seloMaximo(leg(a) ? sv('L2-L') : 'nd'), nota: 'LRF, art. 20, III, "a" · % da RCL ajustada · alerta 5,4% · prudencial 5,7%', aba: 'pessoal' }),
+    cartaoMeta({ titulo: 'Despesa corrente / receita corrente', valores: [a.r167?.pct, b.r167?.pct, c.r167?.pct], rotulos: r, meta: 95, sentido: 'maximo',
+      sev: a.r167 ? sv('L1') : 'nd', textoSelo: { ok: 'Abaixo de 85%', baixo: 'Abaixo de 85%', medio: 'Tendência de alta', alto: 'Acima do alerta de 85%', critico: 'Acima do limite', nd: 'Sem dados' }[a.r167 ? sv('L1') : 'nd'],
+      nota: `CF, art. 167-A · 12 meses · alerta 85%${a.r167?.ajustado ? ' · superávit excluído' : ''}`, aba: 'art167' }),
+  ].join('');
+  const vm = f => mn.map(x => { try { return x ? f(x) : null; } catch { return null; } });
+  const memoria = tabelaComparativa({ cabecalhos: cabRREO(p, m), primeira: 'Memória de cálculo', linhas: [
+    { secao: 'Educação – manutenção e desenvolvimento do ensino (mínimo de 25%)' },
+    linha('Receita de impostos e transferências constitucionais (base)', vm(x => x.mde.base)),
+    linha('Despesa com MDE custeada com impostos', vm(x => x.mde.despesas), { nivel: 1 }),
+    linha('(+) Receita destinada à formação do FUNDEB', vm(x => x.mde.deducaoFundeb), { nivel: 1 }),
+    linha('Total aplicado em MDE', vm(x => x.mde.aplicado), { forte: true }),
+    linha('Percentual aplicado', vm(x => x.mde.pct), { tipo: 'pct', forte: true }),
+    linha('Mínimo exigido (25% da base)', vm(x => x.mde.exigido)),
+    linha('Excedente (+) ou insuficiência (−)', vm(x => x.mde.aplicado - x.mde.exigido)),
+    { secao: 'Saúde – ações e serviços públicos de saúde (mínimo de 15%)' },
+    linha('Receita de impostos e transferências constitucionais (base)', vm(x => x.asps.base)),
+    linha('Despesa com ASPS custeada com impostos', vm(x => x.asps.aplicado), { forte: true }),
+    linha('Percentual aplicado', vm(x => x.asps.pct), { tipo: 'pct', forte: true }),
+    linha('Mínimo exigido (15% da base)', vm(x => x.asps.exigido)),
+    linha('Excedente (+) ou insuficiência (−)', vm(x => x.asps.aplicado - x.asps.exigido)),
+    { secao: 'FUNDEB – remuneração dos profissionais da educação básica (mínimo de 70%)' },
+    linha('Recursos do FUNDEB recebidos no exercício', vm(x => x.fundeb.receitas)),
+    linha('Remuneração dos profissionais da educação básica', vm(x => x.fundeb.remuneracao), { forte: true }),
+    linha('Percentual aplicado em remuneração', vm(x => x.fundeb.pct), { tipo: 'pct', forte: true }),
+    linha('Despesa total custeada com o FUNDEB', vm(x => x.fundeb.despesas)),
+  ] });
+  const semMinimos = p.anos.filter((_, i) => !mn[i]);
+  const blocoConstitucional = `<div class="grade-cartoes grade-cartoes-largos">${constitucionais}</div>
+    ${semMinimos.length ? aviso(`Educação, saúde e FUNDEB não puderam ser estimados em ${semMinimos.join(' e ')}: a Matriz de Saldos Contábeis do período não foi localizada no SICONFI ou diverge do RREO.`, 'alerta') : ''}
+    <details class="memoria"><summary>Ver a memória de cálculo de educação, saúde e FUNDEB</summary>${memoria}</details>
+    ${aviso('<strong>Educação, saúde e FUNDEB são estimativas.</strong> O painel soma as despesas que o próprio Município marcou na Matriz de Saldos Contábeis como válidas para cada mínimo (códigos 1001, 1002 e 1070 da STN) e as compara com a receita de impostos e transferências. O índice oficial é o apurado no SIOPE, no SIOPS e pelo TCE-MG, que fazem ajustes (restos a pagar sem disponibilidade, cancelamentos, FUNDEB não utilizado) que não estão no SICONFI. O mínimo é anual: durante o exercício o percentual acumulado serve de acompanhamento.', 'info')}`;
   const cartoes = [
-    cartao({ titulo: 'Despesa corrente / receita corrente (art. 167-A)', tipo: 'pct', valores: [a.r167?.pct, b.r167?.pct, c.r167?.pct], rotulos: r, sev: sevDe('L1'), nota: `12 meses · alerta 85% · limite 95%${a.r167?.ajustado ? ' · superávit excluído' : ''}`, aba: 'art167' }),
     cartao({ titulo: 'Receita realizada', valores: [a.exec?.recReal, b.exec?.recReal, c.exec?.recReal], rotulos: r, sev: sevDe('E2'), nota: a.exec ? `${pct(a.exec.recReal / a.exec.recPrev * 100, 1)} da previsão atualizada` : '', aba: 'receitas' }),
     cartao({ titulo: 'Despesa empenhada', valores: [a.exec?.emp, b.exec?.emp, c.exec?.emp], rotulos: r, nota: a.exec ? `${pct(a.exec.emp / a.exec.dot * 100, 1)} da dotação atualizada` : '', aba: 'despesas' }),
     cartao({ titulo: 'Resultado da execução orçamentária', valores: [a.exec?.resultado, b.exec?.resultado, c.exec?.resultado], rotulos: r, sev: sevDe('E1'), nota: 'receitas realizadas − despesas empenhadas', aba: 'despesas' }),
     cartao({ titulo: 'Receita corrente líquida (12 meses)', valores: [a.rcl, b.rcl, c.rcl], rotulos: r, aba: 'rcl' }),
-    cartao({ titulo: 'Pessoal do Executivo / RCL ajustada', tipo: 'pct', valores: [pes(a)?.pct, pes(b)?.pct, pes(c)?.pct], rotulos: p.anosRGF.map(String), sev: sevDe('L2-E'), nota: pes(a) ? `limite máximo ${pct(pes(a).maximo.pct, 1)}` : 'RGF não localizado', aba: 'pessoal' }),
     cartao({ titulo: 'Dívida consolidada líquida / RCL', tipo: 'pct', valores: [a.divida?.pctDcl, b.divida?.pctDcl, c.divida?.pctDcl], rotulos: p.anosRGF.map(String), sev: sevDe('L3'), nota: a.divida ? `limite ${pct(a.divida.limitePct, 0)}` : '', aba: 'divida' }),
     cartao({ titulo: 'Resultado primário', valores: [a.primario, b.primario, c.primario], rotulos: r, sev: sevDe('E4'), nota: 'acima da linha, sem RPPS', aba: 'resultados' }),
     cartao({ titulo: 'Investimentos liquidados', valores: [a.exec?.invLiq, b.exec?.invLiq, c.exec?.invLiq], rotulos: r, aba: 'despesas' }),
@@ -96,7 +142,8 @@ function visao(el, { p, estado }) {
 
   el.innerHTML = `
     ${secao('Possíveis apontamentos', resumo, 'Situações que tendem a ser objeto de apontamento ou alerta do TCE-MG, apuradas com os dados do SICONFI.')}
-    ${secao('Indicadores – exercício atual e dois anteriores', `<p class="sub">${notaModo(p, m)}</p><div class="grade-cartoes">${cartoes}</div>`)}
+    ${secao('Mínimos e limites constitucionais', blocoConstitucional, `${notaModo(p, m)} Pessoal: ${rotuloPeriodoRGF(p.periodicidadeExec, Math.floor(p.mesRGF / (p.periodicidadeExec === 'S' ? 6 : 4)))} de ${p.anosRGF[0]}.`)}
+    ${secao('Demais indicadores – exercício atual e dois anteriores', `<div class="grade-cartoes">${cartoes}</div>`)}
     ${secao('Receita × despesa', grafico)}`;
 }
 
@@ -494,7 +541,7 @@ function despesas(el, ctx) {
       + secao('Despesa por categoria econômica e grupo – RREO', tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: porGrupo, primeira: `Grupo – ${est === 'dot' ? 'dotação atualizada' : 'despesa ' + nomeEst.toLowerCase()}` }),
         'RREO Anexo 01, exceto intraorçamentárias (mostradas em linha própria).')
       + secao('Participação de cada função na despesa', grafico + tabelaComparativa({ cabecalhos: cabRREO(p, m), linhas: partic, primeira: 'Função (% do total, exceto intraorçamentárias)' })
-        + aviso('Os índices constitucionais de educação (CF, art. 212 – 25%) e de saúde (LC nº 141/2012 – 15%) são apurados no SIOPE e no SIOPS e não são publicados na API do SICONFI. A despesa nas funções Educação e Saúde é informação gerencial e não equivale a esses índices.', 'info'));
+        + aviso('A despesa total nas funções Educação e Saúde não equivale aos mínimos constitucionais, que consideram apenas a parcela custeada com impostos. Os percentuais de educação (25%), saúde (15%) e FUNDEB (70%) estão na aba <a href="#" data-ir="visao">Visão geral</a>.', 'info'));
   }
 
   el.innerHTML = blocoFontes + blocoRREO;
@@ -808,6 +855,7 @@ function sobre(el, { p }) {
       <p>A DCA é anual: enquanto a do exercício selecionado não é entregue, a aba Balanço anual compara os três últimos balanços disponíveis. O RGF Anexo 05 (disponibilidade de caixa) só existe no último período de cada exercício.</p></div>`)
     + secao('Regras dos apontamentos', `<div class="tabela-rolagem"><table class="tabela tabela-texto"><thead><tr><th>Verificação</th><th>Critério</th><th>Fundamento</th></tr></thead><tbody>
       <tr><th>Despesa corrente / receita corrente</th><td>12 meses; despesas liquidadas + RPNP de dezembro, excluídas as custeadas com superávit financeiro; alerta a 85% e limite a 95%; projeção para dezembro</td><td>CF/88, art. 167-A; TCE-MG, IN nº 07/2025</td></tr>
+      <tr><th>Educação, saúde e FUNDEB</th><td>Despesas marcadas na MSC com os códigos 1001 (MDE), 1002 (ASPS) e 1070 (remuneração – FUNDEB) sobre a receita de impostos e transferências; mínimos de 25%, 15% e 70%</td><td>CF/88, arts. 198, 212 e 212-A; LC nº 141/2012; Lei nº 14.113/2020</td></tr>
       <tr><th>Despesa com pessoal</th><td>Percentual e limites declarados no RGF Anexo 01 de cada Poder/órgão; tendência de 12 meses</td><td>LRF, arts. 19 a 23 e 59</td></tr>
       <tr><th>Dívida, operações de crédito e garantias</th><td>120% da RCL; 16%; 22%</td><td>Resoluções SF nº 40 e 43/2001</td></tr>
       <tr><th>Regra de ouro</th><td>Operações de crédito × despesas de capital</td><td>CF/88, art. 167, III</td></tr>
@@ -822,7 +870,7 @@ function sobre(el, { p }) {
     </tbody></table></div>`)
     + secao('Limitações', `<div class="texto"><ul>
       <li>As análises são <strong>indicativas</strong> e não substituem a apuração oficial do TCE-MG, que utiliza o SICOM e documentos que não estão no SICONFI.</li>
-      <li>Os índices de educação (25%), FUNDEB e saúde (15%) são apurados no SIOPE e no SIOPS e não constam da API do SICONFI.</li>
+      <li>Os índices de educação (25%), saúde (15%) e FUNDEB (70%) são <strong>estimativas</strong> feitas com a marcação da Matriz de Saldos Contábeis; a apuração oficial é a do SIOPE, do SIOPS e do TCE-MG, que aplicam ajustes não disponíveis no SICONFI.</li>
       <li>A exclusão das despesas custeadas com superávit financeiro, no art. 167-A, depende da Matriz de Saldos Contábeis: quando a MSC de algum mês não foi enviada, está incompleta ou diverge do RREO, a relação é mostrada sem a exclusão, com aviso. Os restos a pagar não processados cancelados não são abatidos.</li>
       <li>A meta de resultado primário da LDO e o limite de gastos do Legislativo (CF, art. 29-A) dependem de dados que não estão na API.</li>
       <li>O extrato de entregas traz a data do último status, não a da primeira homologação.</li></ul></div>`);

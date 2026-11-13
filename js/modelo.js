@@ -3,7 +3,7 @@
 
 import { consultar } from './api.js';
 import { MUNICIPIO } from './config.js';
-import { mscOrcamentaria, correntesESuperavit } from './fontes.js';
+import { mscOrcamentaria, correntesESuperavit, componentesMinimos } from './fontes.js';
 
 export const norm = s => (s ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toUpperCase().replace(/\s+/g, ' ').trim();
@@ -245,7 +245,7 @@ export async function carregarPacote({ ano, bim = null, forcar = false }) {
   const msc = {};
   const pedirMSC = async (a, b) => {
     const r = await mscOrcamentaria(a, b * 2, op);
-    (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r) };
+    (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r), minimos: componentesMinimos(r) };
   };
   const pedidosMSC = [];
   for (const a of [ano, ano - 1, ano - 2, ano - 3]) {
@@ -327,7 +327,7 @@ export async function carregarSerieMSC(pacote, { forcar = false } = {}) {
     if (a < ANO_FONTES_PADRONIZADAS) continue;
     for (const b of a === ano ? bimEntregues[a] : [1, 2, 3, 4, 5, 6]) {
       if (msc[a]?.[b]) continue;
-      tarefas.push(mscOrcamentaria(a, b * 2, { forcar }).then(r => { (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r) }; }));
+      tarefas.push(mscOrcamentaria(a, b * 2, { forcar }).then(r => { (msc[a] ||= {})[b] = { tem: r.tem, ...correntesESuperavit(r), minimos: componentesMinimos(r) }; }));
     }
   }
   await Promise.all(tarefas);

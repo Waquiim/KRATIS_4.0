@@ -40,7 +40,7 @@ Abrir o `index.html` direto do disco não funciona: o navegador exige um endere�
 
 | Aba | Conteúdo | Fonte no SICONFI |
 |---|---|---|
-| Visão geral | Indicadores-chave dos três exercícios e resumo dos apontamentos | RREO, RGF |
+| Visão geral | Resumo dos apontamentos; **mínimos e limites constitucionais** (educação 25%, saúde 15%, FUNDEB 70%, pessoal, art. 167-A) com memória de cálculo; demais indicadores | RREO, RGF, MSC |
 | Apontamentos TCE-MG | Possíveis apontamentos por severidade, com fundamento, orientação e tendência; exporta CSV e PDF | todos |
 | **Art. 167-A** | Relação despesa corrente / receita corrente em 12 meses, série bimestral, projeção para dezembro | RREO Anexo 01 |
 | Receitas | **Filtro por fonte de recursos**; receita por fonte e por origem; previsão, realização e projeção de encerramento | MSC; RREO Anexo 01 |
@@ -80,7 +80,7 @@ detalha por categoria de despesa.
 
 | Grupo | Verificações |
 |---|---|
-| Limites constitucionais e legais | Art. 167-A; despesa com pessoal do Executivo e do Legislativo (LRF, arts. 19 a 23 e 59); dívida consolidada líquida, operações de crédito e garantias (Resoluções SF nº 40 e 43/2001); regra de ouro (CF, art. 167, III) |
+| Limites constitucionais e legais | Educação (25%), saúde (15%) e FUNDEB (70%); art. 167-A; despesa com pessoal do Executivo e do Legislativo (LRF, arts. 19 a 23 e 59); dívida consolidada líquida, operações de crédito e garantias (Resoluções SF nº 40 e 43/2001); regra de ouro (CF, art. 167, III) |
 | Equilíbrio orçamentário e financeiro | Resultado da execução; poupança corrente; ritmo de arrecadação frente à previsão (LRF, art. 9º); previsão de receitas de capital sem realização (LRF, art. 12); resultado primário; passivo a descoberto |
 | Restos a pagar e caixa | Cancelamento de restos a pagar processados; crescimento do estoque; disponibilidade de caixa negativa por vinculação (LRF, arts. 8º, 42 e 50) |
 | Previdência | Resultado previdenciário dos fundos do RPPS |
@@ -94,7 +94,8 @@ a trajetória de 12 meses da despesa com pessoal.
 
 - As análises são indicativas e não substituem a apuração oficial do TCE-MG, que usa o SICOM e documentos que não
   estão no SICONFI.
-- Os índices de educação (25%), FUNDEB e saúde (15%) são apurados no SIOPE e no SIOPS e não constam da API.
+- Os índices de educação (25%), saúde (15%) e FUNDEB (70%) são estimativas feitas com a marcação da Matriz de Saldos
+  Contábeis (códigos 1001, 1002 e 1070 da STN); a apuração oficial é a do SIOPE, do SIOPS e do TCE-MG.
 - A despesa por unidade orçamentária (Secretaria) não é publicada no SICONFI; o painel mostra a despesa por órgão,
   função e subfunção.
 - A meta de resultado primário da LDO e o limite de gastos do Legislativo (CF, art. 29-A) dependem de dados fora da API.

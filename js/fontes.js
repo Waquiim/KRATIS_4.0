@@ -182,14 +182,15 @@ export function resumir(itens) {
     const exerc = fr[0], fonte = fr.slice(1), valor = sinal(it) * (it.valor || 0);
     if (conta.startsWith('6212') || conta.startsWith('6213')) {            // receita realizada e suas deduções
       const nat = String(it.natureza_receita || '');
-      const chave = `${fonte}|${exerc}|${nat.slice(0, 2)}`;
-      const r = receitas.get(chave) || { fonte, exerc, origem: nat.slice(0, 2), valor: 0 };
+      const ded = conta.startsWith('6213') ? 1 : 0;                         // 1 = dedução da receita
+      const chave = `${fonte}|${exerc}|${nat.slice(0, 7)}|${ded}`;
+      const r = receitas.get(chave) || { fonte, exerc, origem: nat.slice(0, 2), nat: nat.slice(0, 7), ded, valor: 0 };
       r.valor += valor; receitas.set(chave, r);
     } else if (conta.startsWith('62213')) {                                 // crédito empenhado, em suas fases
       const nat = String(it.natureza_despesa || ''), funcao = String(it.funcao || ''), subfuncao = String(it.subfuncao || '');
-      const orgao = String(it.poder_orgao || '');
-      const chave = `${fonte}|${exerc}|${nat.slice(0, 4)}|${funcao}|${subfuncao}|${orgao}`;
-      const d = despesas.get(chave) || { fonte, exerc, grupo: nat.slice(0, 2), modalidade: nat.slice(2, 4), funcao, subfuncao, orgao, emp: 0, liq: 0, pago: 0 };
+      const orgao = String(it.poder_orgao || ''), co = String(it.complemento_fonte || '');
+      const chave = `${fonte}|${exerc}|${nat.slice(0, 4)}|${funcao}|${subfuncao}|${orgao}|${co}`;
+      const d = despesas.get(chave) || { fonte, exerc, grupo: nat.slice(0, 2), modalidade: nat.slice(2, 4), funcao, subfuncao, orgao, co, emp: 0, liq: 0, pago: 0 };
       d.emp += valor;
       const fase = conta.slice(5, 7);                                       // 01 a liquidar · 02 em liquidação · 03 liquidado a pagar · 04 pago
       if (fase === '03' || fase === '04' || fase === '07') d.liq += valor;
@@ -210,7 +211,7 @@ export function mscOrcamentaria(ano, mes, { forcar = false } = {}) {
   const chave = `${ano}-${mes}`;
   if (!forcar && memoMSC.has(chave)) return memoMSC.get(chave);
   const promessa = consultar('msc_orcamentaria', { id_ente: MUNICIPIO.c, an_referencia: ano, me_referencia: mes,
-    co_tipo_matriz: 'MSCC', classe_conta: 6, id_tv: 'ending_balance' }, { forcar, reduzir: resumir, nome: 'por-fonte-1' })
+    co_tipo_matriz: 'MSCC', classe_conta: 6, id_tv: 'ending_balance' }, { forcar, reduzir: resumir, nome: 'por-fonte-2' })
     .then(r => ({ ...r.itens, tem: r.itens.receitas.length + r.itens.despesas.length > 0, erro: null }))
     .catch(erro => ({ receitas: [], despesas: [], tem: false, erro: erro.message }));
   memoMSC.set(chave, promessa);
@@ -253,6 +254,41 @@ export function execucaoPorFonte(p, modo) {
   });
   p.porFonte[modo] = estado;
   return estado;
+}
+
+// ---------------------------------------------------------------- mínimos constitucionais
+
+// Naturezas de receita (sete primeiros dígitos) que formam a base de impostos e transferências constitucionais.
+const NAT_IMPOSTOS = ['1112500', '1112530', '111303', '1114511'];                    // IPTU, ITBI, IRRF e ISS (com multas, juros e dívida ativa)
+const NAT_TRANSFERENCIAS = ['1711511', '1711520', '1721500', '1721510', '1721520'];  // FPM (cota mensal), ITR, ICMS, IPVA e IPI-exportação
+const NAT_FPM_ADICIONAL = ['1711512', '1711513', '1711514'];                         // parcelas adicionais de 1% do FPM (CF, art. 159, I, "d", "e" e "f")
+const comeca = (nat, lista) => lista.some(p => nat.startsWith(p));
+const FONTES_FUNDEB = ['540', '541', '542'];                                         // a complementação VAAR (543) não entra nos 70%
+
+/**
+ * Componentes dos mínimos constitucionais de educação (CF, art. 212), saúde (LC nº 141/2012) e da
+ * remuneração dos profissionais da educação com o FUNDEB (CF, art. 212-A, XI), a partir da MSC.
+ * As despesas são as que o próprio Município marcou com os códigos de acompanhamento da execução
+ * orçamentária definidos pela STN: 1001 (MDE), 1002 (ASPS) e 1070 (remuneração – FUNDEB).
+ */
+export function componentesMinimos(msc) {
+  const c = { impostos: 0, transferencias: 0, fpmAdicional: 0, deducaoFundeb: 0, mdeLiq: 0, mdeEmp: 0, aspsLiq: 0, aspsEmp: 0,
+    fundebReceitas: 0, fundebLiq: 0, fundebEmp: 0, remuneracaoLiq: 0, remuneracaoEmp: 0 };
+  for (const r of msc.receitas) {
+    const constitucional = comeca(r.nat, NAT_TRANSFERENCIAS) || comeca(r.nat, NAT_FPM_ADICIONAL);
+    if (r.ded && constitucional) c.deducaoFundeb -= r.valor;                         // dedução para formação do FUNDEB
+    else if (comeca(r.nat, NAT_IMPOSTOS)) c.impostos += r.valor;
+    else if (comeca(r.nat, NAT_TRANSFERENCIAS)) c.transferencias += r.valor;
+    else if (comeca(r.nat, NAT_FPM_ADICIONAL)) c.fpmAdicional += r.valor;
+    if (r.exerc === '1' && FONTES_FUNDEB.includes(r.fonte)) c.fundebReceitas += r.valor;
+  }
+  for (const d of msc.despesas) {
+    if (d.co === '1001') { c.mdeLiq += d.liq; c.mdeEmp += d.emp; }
+    else if (d.co === '1002') { c.aspsLiq += d.liq; c.aspsEmp += d.emp; }
+    else if (d.co === '1070') { c.remuneracaoLiq += d.liq; c.remuneracaoEmp += d.emp; }
+    if (d.exerc === '1' && FONTES_FUNDEB.includes(d.fonte)) { c.fundebLiq += d.liq; c.fundebEmp += d.emp; }
+  }
+  return c;
 }
 
 /** Filtro: { sel: Set de códigos de três dígitos ou null (todas), exerc: 'todos' | '1' | '2' }. */

@@ -143,6 +143,33 @@ export function projecao167(p, ano, bim) {
   return { rc, liq, rpnp, dcBruta, exclusao, ajustado: exclusao !== null, dc, pct: dc / rc * 100, pctSemExclusao: dcBruta / rc * 100 };
 }
 
+export const MINIMOS = { mde: 25, asps: 15, fundebRemuneracao: 70, fundebNaoAplicado: 10 };
+
+/**
+ * Mínimos constitucionais de educação, saúde e FUNDEB acumulados até o bimestre, estimados com a MSC.
+ * Durante o exercício considera-se a despesa liquidada; no encerramento (6º bimestre), a empenhada.
+ * Devolve null quando a MSC do período não existe ou não confere com o RREO.
+ */
+export function minimos(p, ano, bim) {
+  const m = superavitDe(p, ano, bim);
+  if (!m || !m.minimos) return null;
+  const c = m.minimos, fechado = bim === 6;
+  const baseMde = c.impostos + c.transferencias + c.fpmAdicional;
+  const baseAsps = c.impostos + c.transferencias;                 // sem as parcelas adicionais do FPM
+  if (baseMde <= 0) return null;
+  const despMde = fechado ? c.mdeEmp : c.mdeLiq, despAsps = fechado ? c.aspsEmp : c.aspsLiq;
+  const remuneracao = fechado ? c.remuneracaoEmp : c.remuneracaoLiq;
+  return {
+    fechado, estagio: fechado ? 'empenhada' : 'liquidada',
+    impostos: c.impostos, transferencias: c.transferencias, fpmAdicional: c.fpmAdicional,
+    mde: { base: baseMde, despesas: despMde, deducaoFundeb: c.deducaoFundeb, aplicado: despMde + c.deducaoFundeb,
+      pct: (despMde + c.deducaoFundeb) / baseMde * 100, minimo: MINIMOS.mde, exigido: baseMde * MINIMOS.mde / 100 },
+    asps: { base: baseAsps, aplicado: despAsps, pct: despAsps / baseAsps * 100, minimo: MINIMOS.asps, exigido: baseAsps * MINIMOS.asps / 100 },
+    fundeb: c.fundebReceitas > 0 ? { receitas: c.fundebReceitas, remuneracao, pct: remuneracao / c.fundebReceitas * 100, minimo: MINIMOS.fundebRemuneracao,
+      despesas: fechado ? c.fundebEmp : c.fundebLiq, naoAplicadoPct: fechado ? Math.max(0, (c.fundebReceitas - c.fundebEmp) / c.fundebReceitas * 100) : null } : null,
+  };
+}
+
 /** Série da relação por bimestre para os três exercícios (requer a série do Anexo 01). */
 export function serie167(p) {
   return p.anos.map(ano => ({
@@ -286,7 +313,7 @@ export function indicadores(p, ano, modo = 'periodo') {
   const lista = p.listaRGF(anoRgf, modo);
   const exec = lista.find(x => x.poder === 'E');
   return {
-    ano, anoRgf, bim, exec: execucao(d), r167: relacao167(p, ano, bim), ...resultados(d), rp: restosAPagar(d),
+    ano, anoRgf, bim, exec: execucao(d), r167: relacao167(p, ano, bim), minimos: minimos(p, ano, bim), ...resultados(d), rp: restosAPagar(d),
     funcoes: porFuncao(d), pessoal: lista.map(pessoal).filter(Boolean), divida: divida(exec), caixa: caixa(exec),
     populacao: d.populacao,
   };
@@ -383,6 +410,56 @@ export function apontamentos(p, hoje = new Date()) {
             : 'Manter o acompanhamento bimestral da relação e a declaração exigida pelo § 6º do art. 167-A.',
         metodologia: 'Base móvel de 12 meses. Do RREO Anexo 01: despesas correntes liquidadas (inclusive intraorçamentárias) + despesas empenhadas e não liquidadas inscritas em RPNP em dezembro, e receitas correntes realizadas, líquidas de deduções (inclusive intraorçamentárias). Da Matriz de Saldos Contábeis: despesas correntes custeadas com recursos de exercícios anteriores (fontes cujo primeiro dígito é 2), que correspondem aos créditos abertos com superávit financeiro e são excluídas, como admite o TCE-MG. A exclusão só é aplicada quando a MSC de todos os meses envolvidos existe e confere com o RREO. Não são abatidos os RPNP cancelados, que o SICONFI não detalha por categoria.',
         fonte: 'RREO – Anexo 01; MSC', aba: 'art167' });
+    }
+  }
+
+  // ---- M1 a M3: mínimos constitucionais de educação, saúde e FUNDEB (estimados com a MSC)
+  {
+    const mn = at.minimos, mnAnt = ant?.minimos, mnFim = F[ano - 1]?.minimos;
+    const NOTA = 'Estimativa com as despesas que o Município marcou na Matriz de Saldos Contábeis; o índice oficial é o apurado no SIOPE, no SIOPS e pelo TCE-MG.';
+    const avaliar = (x, folga) => x.pct < x.minimo ? (at.minimos.fechado ? 'critico' : 'medio') : x.pct < x.minimo + folga ? 'baixo' : 'ok';
+    const historico = (campo, rotulo) => [
+      mnAnt?.[campo] ? `No mesmo período de ${ano - 1}: ${pct(mnAnt[campo].pct)}.` : null,
+      mnFim?.[campo] && bim !== 6 ? `O exercício de ${ano - 1} encerrou em ${pct(mnFim[campo].pct)}${mnFim[campo].pct < mnFim[campo].minimo ? `, abaixo do mínimo de ${rotulo}` : ''}.` : null,
+    ].filter(Boolean).join(' ') || null;
+    const durante = bim === 6 ? '' : ' O mínimo é anual: o percentual acumulado durante o exercício serve de acompanhamento e precisa estar atingido em dezembro.';
+    if (!mn) {
+      add({ id: 'M1', grupo: GRUPOS[0], titulo: 'Mínimos de educação, saúde e FUNDEB', sev: 'nd',
+        resultado: 'A Matriz de Saldos Contábeis do período não foi localizada no SICONFI ou diverge do RREO; os índices não puderam ser estimados.',
+        fundamento: 'CF/88, arts. 198, § 2º, 212 e 212-A.', fonte: 'MSC', aba: 'visao' });
+    } else {
+      const e = mn.mde, sevE = avaliar(e, 1);
+      add({ id: 'M1', grupo: GRUPOS[0], titulo: 'Educação – aplicação mínima em manutenção e desenvolvimento do ensino', sev: sevE,
+        resultado: `${pct(e.pct)} da receita de impostos e transferências até o ${perRREO(ano, bim)}: ${moedaCurta(e.aplicado)} aplicados (${moedaCurta(e.despesas)} de despesa ${mn.estagio} com impostos + ${moedaCurta(e.deducaoFundeb)} destinados ao FUNDEB) sobre base de ${moedaCurta(e.base)}. ${e.pct < e.minimo ? `Faltam ${moedaCurta(e.exigido - e.aplicado)} para os 25%.` : `Excedente sobre os 25%: ${moedaCurta(e.aplicado - e.exigido)}.`}` + durante,
+        tendencia: historico('mde', '25%'), referencia: 'Mínimo: 25%',
+        fundamento: 'CF/88, art. 212; Lei nº 9.394/1996 (LDB), arts. 69 a 71; CF/88, art. 35, III.',
+        recomendacao: sevE === 'ok' ? 'Acima do mínimo. Manter o acompanhamento bimestral.' : 'A aplicação abaixo de 25% no encerramento do exercício leva à emissão de parecer prévio pela rejeição das contas e pode ensejar intervenção (CF, art. 35, III). Reprogramar a despesa de MDE custeada com impostos para atingir o mínimo até dezembro.',
+        metodologia: NOTA + ' Aplicado = despesas marcadas com o código 1001 (MDE custeada com impostos) + dedução da receita para formação do FUNDEB; base = IPTU, ITBI, ISS, IRRF, FPM (inclusive parcelas adicionais), ITR, ICMS, IPVA e IPI-exportação. Não são feitos os ajustes de restos a pagar sem disponibilidade, cancelamentos e FUNDEB não utilizado.',
+        fonte: 'MSC', aba: 'visao' });
+      const sd = mn.asps, sevS = avaliar(sd, 1);
+      add({ id: 'M2', grupo: GRUPOS[0], titulo: 'Saúde – aplicação mínima em ações e serviços públicos de saúde', sev: sevS,
+        resultado: `${pct(sd.pct)} da receita de impostos e transferências até o ${perRREO(ano, bim)}: ${moedaCurta(sd.aplicado)} de despesa ${mn.estagio} com recursos próprios sobre base de ${moedaCurta(sd.base)}. ${sd.pct < sd.minimo ? `Faltam ${moedaCurta(sd.exigido - sd.aplicado)} para os 15%.` : `Excedente sobre os 15%: ${moedaCurta(sd.aplicado - sd.exigido)}.`}` + durante,
+        tendencia: historico('asps', '15%'), referencia: 'Mínimo: 15%',
+        fundamento: 'CF/88, art. 198, § 2º, III; Lei Complementar nº 141/2012, arts. 7º, 25 e 26.',
+        recomendacao: sevS === 'ok' ? 'Acima do mínimo. Manter o acompanhamento bimestral.' : 'O descumprimento do mínimo de 15% sujeita o Município à restrição de transferências voluntárias e ao condicionamento de repasses (LC nº 141/2012, arts. 25 e 26), além da rejeição das contas.',
+        metodologia: NOTA + ' Aplicado = despesas marcadas com o código 1002 (ASPS custeada com impostos); base = IPTU, ITBI, ISS, IRRF, FPM (cota mensal), ITR, ICMS, IPVA e IPI-exportação.',
+        fonte: 'MSC', aba: 'visao' });
+      if (mn.fundeb) {
+        const fb = mn.fundeb, sevF = avaliar(fb, 2);
+        add({ id: 'M3', grupo: GRUPOS[0], titulo: 'FUNDEB – remuneração dos profissionais da educação básica', sev: sevF,
+          resultado: `${pct(fb.pct)} dos recursos do FUNDEB até o ${perRREO(ano, bim)}: ${moedaCurta(fb.remuneracao)} de remuneração (despesa ${mn.estagio}) sobre ${moedaCurta(fb.receitas)} recebidos.` + durante,
+          tendencia: historico('fundeb', '70%'), referencia: 'Mínimo: 70%',
+          fundamento: 'CF/88, art. 212-A, XI; Lei nº 14.113/2020, art. 26.',
+          recomendacao: sevF === 'ok' ? 'Acima do mínimo. Manter o acompanhamento bimestral.' : 'Pelo menos 70% dos recursos anuais do FUNDEB devem remunerar os profissionais da educação básica em efetivo exercício. Rever a programação da folha custeada com o Fundo.',
+          metodologia: NOTA + ' Remuneração = despesas marcadas com o código 1070; recursos = receitas das fontes 540, 541 e 542 no exercício (a complementação VAAR não entra).',
+          fonte: 'MSC', aba: 'visao' });
+        if (fb.naoAplicadoPct !== null && fb.naoAplicadoPct > MINIMOS.fundebNaoAplicado) {
+          add({ id: 'M4', grupo: GRUPOS[0], titulo: 'FUNDEB – recursos não utilizados no exercício', sev: 'alto',
+            resultado: `${pct(fb.naoAplicadoPct)} dos recursos do FUNDEB de ${ano} não foram empenhados no exercício (limite de 10%).`,
+            fundamento: 'Lei nº 14.113/2020, art. 25, § 3º.', recomendacao: 'Até 10% dos recursos podem ser utilizados no primeiro quadrimestre do exercício seguinte, mediante crédito adicional; o excedente é irregular e é deduzido da aplicação em MDE.',
+            fonte: 'MSC', aba: 'visao' });
+        }
+      }
     }
   }
 
