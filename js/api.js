@@ -6,6 +6,17 @@ const VALIDADE_MS = 12 * 3600 * 1000;   // o cache local vale 12 horas
 const SIMULTANEAS = 4;                   // consultas simultâneas (a API limita o ritmo)
 const TENTATIVAS = 4;
 
+// O servidor da API responde com a permissão de acesso (CORS) para o endereço de quem perguntou, mas a
+// rede de distribuição do Tesouro guarda essa resposta e a devolve a qualquer outro endereço que faça a
+// mesma consulta – e o navegador então a bloqueia. Para que a resposta guardada seja sempre a deste
+// endereço, cada consulta leva uma marca própria da origem da página; a API ignora o parâmetro.
+function marcaDaOrigem() {
+  let h = 5381;
+  for (const c of location.origin) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0;
+  return 'kratis-' + h.toString(36);
+}
+const MARCA = marcaDaOrigem();
+
 const memoria = new Map();               // chave -> Promise<{itens, em, defasado}>
 const fila = [];
 let ativas = 0;
@@ -84,13 +95,15 @@ function proxima() {
 async function baixarPagina(url) {
   let ultimoErro;
   for (let i = 0; i < TENTATIVAS; i++) {
+    // Nas repetições, um parâmetro único obriga a rede de distribuição a buscar uma resposta nova na API.
+    const alvo = i === 0 ? url : `${url}&_r=${Date.now().toString(36)}${i}`;
     try {
-      const resposta = await fetch(url, { headers: { Accept: 'application/json' } });
+      const resposta = await fetch(alvo, { headers: { Accept: 'application/json' } });
       if (resposta.ok) return await resposta.json();
       ultimoErro = new Error(`HTTP ${resposta.status}`);
       if (resposta.status < 500 && resposta.status !== 429) break;   // erro do pedido: não adianta repetir
     } catch (erro) { ultimoErro = erro; }
-    await espera(600 * 2 ** i);
+    await espera(300 * 3 ** i);
   }
   throw ultimoErro;
 }
@@ -103,11 +116,17 @@ function montarUrl(recurso, params, deslocamento) {
   return BASE + recurso + (pares.length ? '?' + pares.join('&') : '');
 }
 
+/** Endereço efetivamente consultado: o mesmo de montarUrl, com a marca da origem da página. */
+function urlDaRede(recurso, params, deslocamento) {
+  const url = montarUrl(recurso, params, deslocamento);
+  return url + (url.includes('?') ? '&' : '?') + '_o=' + MARCA;
+}
+
 async function baixarTudo(recurso, params) {
   const itens = [];
   let deslocamento = 0;
   for (;;) {
-    const pagina = await naFila(() => baixarPagina(montarUrl(recurso, params, deslocamento)));
+    const pagina = await naFila(() => baixarPagina(urlDaRede(recurso, params, deslocamento)));
     itens.push(...(pagina.items || []));
     if (!pagina.hasMore) return itens;
     deslocamento += pagina.limit || (pagina.items || []).length || 5000;
