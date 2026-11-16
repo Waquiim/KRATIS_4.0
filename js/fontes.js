@@ -129,6 +129,7 @@ export const ORIGENS_RECEITA = {
 export const GRUPOS_DESPESA = {
   31: 'Pessoal e encargos sociais', 32: 'Juros e encargos da dívida', 33: 'Outras despesas correntes',
   44: 'Investimentos', 45: 'Inversões financeiras', 46: 'Amortização da dívida',
+  99: 'Reserva de contingência e reserva do RPPS',
 };
 
 /** Poder ou órgão informado na MSC (é o maior detalhe institucional que o SICONFI publica). */
@@ -173,28 +174,39 @@ export const nomeDaSubfuncao = cod => SUBFUNCOES[cod] || `Subfunção ${cod}`;
 
 const sinal = it => it.natureza_conta === 'C' ? 1 : -1;
 
-/** Resume a MSC orçamentária (classe 6) de um mês em receitas e despesas por fonte. */
+/**
+ * Resume a MSC orçamentária (classe 6) de um mês em receitas e despesas por fonte.
+ * Receita: `valor` é a realizada líquida de deduções (contas 6212 e 6213) e `prev` a previsão atualizada,
+ * obtida pela soma da receita a realizar (6211) com a realizada líquida.
+ * Despesa: `dot` é a dotação atualizada – crédito disponível (62211), indisponível (62212) e utilizado
+ * (62213) –, `emp` o crédito empenhado e `liq` e `pago` as suas fases.
+ */
 export function resumir(itens) {
   const receitas = new Map(), despesas = new Map();
   for (const it of itens) {
     const conta = String(it.conta_contabil || ''), fr = String(it.fonte_recursos || '');
     if (fr.length !== 4) continue;
     const exerc = fr[0], fonte = fr.slice(1), valor = sinal(it) * (it.valor || 0);
-    if (conta.startsWith('6212') || conta.startsWith('6213')) {            // receita realizada e suas deduções
+    if (conta.startsWith('6211') || conta.startsWith('6212') || conta.startsWith('6213')) {
       const nat = String(it.natureza_receita || '');
       const ded = conta.startsWith('6213') ? 1 : 0;                         // 1 = dedução da receita
       const chave = `${fonte}|${exerc}|${nat.slice(0, 7)}|${ded}`;
-      const r = receitas.get(chave) || { fonte, exerc, origem: nat.slice(0, 2), nat: nat.slice(0, 7), ded, valor: 0 };
-      r.valor += valor; receitas.set(chave, r);
-    } else if (conta.startsWith('62213')) {                                 // crédito empenhado, em suas fases
+      const r = receitas.get(chave) || { fonte, exerc, origem: nat.slice(0, 2), nat: nat.slice(0, 7), ded, valor: 0, prev: 0 };
+      r.prev += valor;                                                      // a realizar + realizada − deduções = previsão atualizada
+      if (!conta.startsWith('6211')) r.valor += valor;
+      receitas.set(chave, r);
+    } else if (conta.startsWith('6221')) {                                  // dotação: crédito disponível, indisponível e utilizado
       const nat = String(it.natureza_despesa || ''), funcao = String(it.funcao || ''), subfuncao = String(it.subfuncao || '');
       const orgao = String(it.poder_orgao || ''), co = String(it.complemento_fonte || '');
       const chave = `${fonte}|${exerc}|${nat.slice(0, 4)}|${funcao}|${subfuncao}|${orgao}|${co}`;
-      const d = despesas.get(chave) || { fonte, exerc, grupo: nat.slice(0, 2), modalidade: nat.slice(2, 4), funcao, subfuncao, orgao, co, emp: 0, liq: 0, pago: 0 };
-      d.emp += valor;
-      const fase = conta.slice(5, 7);                                       // 01 a liquidar · 02 em liquidação · 03 liquidado a pagar · 04 pago
-      if (fase === '03' || fase === '04' || fase === '07') d.liq += valor;
-      if (fase === '04') d.pago += valor;
+      const d = despesas.get(chave) || { fonte, exerc, grupo: nat.slice(0, 2), modalidade: nat.slice(2, 4), funcao, subfuncao, orgao, co, dot: 0, emp: 0, liq: 0, pago: 0 };
+      d.dot += valor;
+      if (conta.startsWith('62213')) {                                      // crédito empenhado, em suas fases
+        d.emp += valor;
+        const fase = conta.slice(5, 7);                                     // 01 a liquidar · 02 em liquidação · 03 liquidado a pagar · 04 pago
+        if (fase === '03' || fase === '04' || fase === '07') d.liq += valor;
+        if (fase === '04') d.pago += valor;
+      }
       despesas.set(chave, d);
     }
   }
@@ -211,8 +223,8 @@ export function mscOrcamentaria(ano, mes, { forcar = false } = {}) {
   const chave = `${ano}-${mes}`;
   if (!forcar && memoMSC.has(chave)) return memoMSC.get(chave);
   const promessa = consultar('msc_orcamentaria', { id_ente: MUNICIPIO.c, an_referencia: ano, me_referencia: mes,
-    co_tipo_matriz: 'MSCC', classe_conta: 6, id_tv: 'ending_balance' }, { forcar, reduzir: resumir, nome: 'por-fonte-2' })
-    .then(r => ({ ...r.itens, tem: r.itens.receitas.length + r.itens.despesas.length > 0, erro: null }))
+    co_tipo_matriz: 'MSCC', classe_conta: 6, id_tv: 'ending_balance' }, { forcar, reduzir: resumir, nome: 'por-fonte-3' })
+    .then(r => ({ ...r.itens, tem: r.itens.receitas.some(x => x.valor) || r.itens.despesas.some(x => x.emp), erro: null }))
     .catch(erro => ({ receitas: [], despesas: [], tem: false, erro: erro.message }));
   memoMSC.set(chave, promessa);
   return promessa;

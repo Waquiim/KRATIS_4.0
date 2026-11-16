@@ -7,7 +7,7 @@ import {
   indicadores, apontamentos, contagemSeveridades, relacao167, projecao167, serie167, entregas, execucao,
 } from './analise.js';
 import { moeda, moedaCurta, pct, pp, numero, variacao, pctVariacao, data, dataHora, vazio, esc } from './formato.js';
-import { selo, cartao, cartaoMeta, medidor, tabelaComparativa, linhasDoAnexo, graficoBarras, graficoLinhas, aviso, secao, CORES_SERIE } from './ui.js';
+import { selo, cartao, cartaoMeta, medidor, tabelaComparativa, tabelaExecucao, linhasDoAnexo, graficoBarras, graficoLinhas, aviso, secao, CORES_SERIE } from './ui.js';
 import { GRUPOS_FONTE, ORIGENS_RECEITA, GRUPOS_DESPESA, grupoDaFonte, nomeDaFonte, nomeDoOrgao, nomeDaSubfuncao, execucaoPorFonte, somarPor, filtroAtivo } from './fontes.js';
 
 export const ABAS = [
@@ -352,6 +352,47 @@ function linhasPorFonte(pf, p, f, tipo, campo) {
   return { linhas, total };
 }
 
+/**
+ * Previsto × realizado por fonte. Cada linha traz, do exercício de referência, a base (previsão ou
+ * dotação), o realizado e o saldo; e o percentual realizado nos três exercícios.
+ */
+function linhasPrevistoRealizado(pf, p, f, tipo, campoBase, campoReal, semBase) {
+  const mapa = campo => p.anos.map(a => somarPor(pf.anos[a]?.[tipo] || [], f, x => x.fonte, campo));
+  const base = mapa(campoBase), real = mapa(campoReal), tem = p.anos.map(a => pf.anos[a]?.tem);
+  const soma = (mp, cods) => cods.reduce((t, c) => t + (mp.get(c) || 0), 0);
+  const valores = cods => {
+    const b = p.anos.map((_, i) => tem[i] ? soma(base[i], cods) : null), r = p.anos.map((_, i) => tem[i] ? soma(real[i], cods) : null);
+    const perc = i => !tem[i] ? null : b[i] > 0.004 ? r[i] / b[i] * 100 : Math.abs(r[i]) > 0.004 ? semBase : null;
+    return [b[0], r[0], tem[0] ? b[0] - r[0] : null, perc(0), perc(1), perc(2)];
+  };
+  const usada = c => [...base, ...real].some(mp => Math.abs(mp.get(c) || 0) > 0.004);
+  const todas = pf.fontes.filter(c => (!f.sel || f.sel.has(c)) && usada(c));
+  const linhas = [];
+  for (const g of GRUPOS_FONTE) {
+    const cods = todas.filter(c => grupoDaFonte(c).id === g.id);
+    if (!cods.length) continue;
+    linhas.push({ secao: g.nome });
+    cods.forEach(c => linhas.push({ rotulo: `${c} – ${nomeDaFonte(c)}`, valores: valores([c]) }));
+    if (cods.length > 1) linhas.push({ rotulo: `Subtotal – ${g.nome.toLowerCase()}`, valores: valores(cods), forte: true });
+  }
+  if (todas.length) linhas.push({ secao: 'Total' }, { rotulo: filtroAtivo(f) ? 'Total das fontes selecionadas' : 'Total de todas as fontes', valores: valores(todas), forte: true });
+  return linhas;
+}
+
+/** Colunas do quadro previsto × realizado: três de valor (exercício de referência) e o percentual de cada exercício. */
+function colunasPrevistoRealizado(p, pf, { base, subBase, real, saldo, subSaldo, perc }) {
+  const ate = a => pf.anos[a]?.tem ? `até ${MESES[pf.anos[a].mes - 1]}.` : 'MSC não enviada';
+  return [
+    { titulo: base, sub: `${p.ano} · ${subBase}` }, { titulo: real, sub: `${p.ano} · ${ate(p.ano)}` }, { titulo: saldo, sub: subSaldo },
+    ...p.anos.map(a => ({ titulo: `${perc} ${a}`, sub: ate(a), tipo: 'barra', ritmo: pf.anos[a]?.tem ? pf.anos[a].mes / 12 * 100 : null })),
+  ];
+}
+
+const legendaRitmo = (p, pf) => {
+  const mes = pf.anos[p.ano]?.mes;
+  return mes && mes < 12 ? `<span class="legenda-ritmo">O traço em cada barra marca a parcela do ano já decorrida (${mes} de 12 meses = ${pct(mes / 12 * 100, 1)}).</span>` : '';
+};
+
 function avisosMSC(pf, p) {
   const faltam = p.anos.filter(a => !pf.anos[a]?.tem);
   return (faltam.length ? aviso(`A MSC de ${faltam.map(a => `${MESES[(pf.anos[a]?.mes || 12) - 1]}./${a}`).join(' e ')} não foi localizada no SICONFI; a coluna correspondente fica vazia.`, 'alerta') : '')
@@ -405,6 +446,11 @@ function receitas(el, ctx) {
     linhasOrigem.push(linha(filtroAtivo(f) ? 'Total das fontes selecionadas' : 'Total das receitas', porFonte.total, { forte: true }));
     blocoFontes = secao('Receita realizada por fonte de recursos', painelFontes(pf, f) + avisosMSC(pf, p)
         + tabelaComparativa({ cabecalhos: cab, linhas: porFonte.linhas, primeira: 'Fonte de recursos – receita realizada, líquida de deduções' }), NOTA_FONTE)
+      + secao('Receita prevista × realizada por fonte de recursos',
+        tabelaExecucao({ primeira: 'Fonte de recursos', legenda: legendaRitmo(p, pf),
+          colunas: colunasPrevistoRealizado(p, pf, { base: 'Prevista', subBase: 'previsão atualizada', real: 'Realizada', saldo: 'Saldo a realizar', subSaldo: 'prevista − realizada', perc: '% realizado' }),
+          linhas: linhasPrevistoRealizado(pf, p, f, 'receitas', 'prev', 'valor', 'sem previsão') }),
+        `Previsão atualizada da receita no orçamento de ${p.ano} comparada com o que foi arrecadado, fonte por fonte; as três últimas colunas comparam o percentual realizado com o dos dois exercícios anteriores. Saldo negativo indica arrecadação acima da previsão. Valores líquidos de deduções, conforme a Matriz de Saldos Contábeis; sem filtro, os totais coincidem com os do RREO.`)
       + secao(filtroAtivo(f) ? 'Receita por origem – fontes selecionadas' : 'Receita por origem – todas as fontes',
         tabelaComparativa({ cabecalhos: cab, linhas: linhasOrigem, primeira: 'Origem da receita' }));
   }
@@ -453,9 +499,10 @@ function despesas(el, ctx) {
   const est = estado.estagio || 'liq', [nomeEst, colEst] = ESTAGIOS[est];
   const f = filtroFontes(estado), pf = execucaoPorFonte(p, m);
   if (!pf.pronto) pf.promessa.then(() => { if (estado.aba === 'despesas') ctx.redesenhar(); });
-  // estágio usado nas tabelas da MSC (a dotação não tem detalhe por fonte nessas contas)
-  const campo = est === 'pago' ? 'pago' : est === 'emp' ? 'emp' : 'liq';
-  const nomeCampo = { emp: 'empenhada', liq: 'liquidada', pago: 'paga' }[campo];
+  // estágio usado nas tabelas da MSC; no quadro fixada × realizada, a dotação é comparada com a despesa liquidada
+  const campo = est, campoReal = est === 'dot' ? 'liq' : est;
+  const nomeCampo = { emp: 'despesa empenhada', liq: 'despesa liquidada', pago: 'despesa paga', dot: 'dotação atualizada' }[campo];
+  const nomeReal = { emp: 'Empenhada', liq: 'Liquidada', pago: 'Paga' }[campoReal];
   const seletorEstagio = `<div class="barra-acoes"><label>Estágio da despesa <select data-estagio>${Object.entries(ESTAGIOS).map(([k, [n]]) => `<option value="${k}" ${k === est ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>`;
 
   // ---- por fonte, órgão, função e subfunção (MSC)
@@ -479,6 +526,7 @@ function despesas(el, ctx) {
       ...Object.entries(GRUPOS_DESPESA).filter(([k]) => k[0] === '3').map(([k, n]) => linha(n, valores(grupo, k), { nivel: 1 })).filter(comValor),
       linha('Despesas de capital', faixa('4'), { forte: true }),
       ...Object.entries(GRUPOS_DESPESA).filter(([k]) => k[0] === '4').map(([k, n]) => linha(n, valores(grupo, k), { nivel: 1 })).filter(comValor),
+      linha(GRUPOS_DESPESA[99], faixa('9'), { forte: true }),
       linhaTotal,
       linha('das quais: intraorçamentárias (modalidade 91)', valores(intra, 'intra'), { nivel: 1 }),
     ].filter(comValor);
@@ -495,7 +543,7 @@ function despesas(el, ctx) {
     const subs = [...new Set(sub.flatMap(mp => [...mp.keys()]))];
     const linhasFuncao = [];
     for (const fu of funcoes) {
-      const lf = linha(`${fu} – ${FUNCOES[Number(fu) - 1] || 'Função ' + fu}`, valores(funcao, fu), { forte: true });
+      const lf = linha(`${fu} – ${FUNCOES[Number(fu) - 1] || (fu === '99' ? 'Reserva de contingência' : 'Função ' + fu)}`, valores(funcao, fu), { forte: true });
       if (!comValor(lf)) continue;
       linhasFuncao.push(lf);
       subs.filter(k => k.startsWith(fu + '.')).sort((a, b) => (sub[0].get(b) || 0) - (sub[0].get(a) || 0))
@@ -504,13 +552,18 @@ function despesas(el, ctx) {
     linhasFuncao.push(linhaTotal);
 
     blocoFontes = secao('Despesa por fonte de recursos', painelFontes(pf, f) + seletorEstagio + avisosMSC(pf, p)
-        + tabelaComparativa({ cabecalhos: cab, linhas: porFonte.linhas, primeira: `Fonte de recursos – despesa ${nomeCampo}` }),
-        NOTA_FONTE + (est === 'dot' ? ' A dotação não é detalhada por fonte; as tabelas desta seção mostram a despesa liquidada.' : ''))
-      + secao(`Despesa por órgão – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasOrgao, primeira: `Órgão – despesa ${nomeCampo}` })
+        + tabelaComparativa({ cabecalhos: cab, linhas: porFonte.linhas, primeira: `Fonte de recursos – ${nomeCampo}` }),
+        NOTA_FONTE + (est === 'dot' ? ' A dotação inclui a reserva do RPPS, que o RREO apresenta fora do total das despesas.' : ''))
+      + secao('Despesa fixada × realizada por fonte de recursos',
+        tabelaExecucao({ primeira: 'Fonte de recursos', legenda: legendaRitmo(p, pf),
+          colunas: colunasPrevistoRealizado(p, pf, { base: 'Fixada', subBase: 'dotação atualizada', real: nomeReal, saldo: 'Saldo da dotação', subSaldo: `fixada − ${nomeReal.toLowerCase()}`, perc: `% ${nomeReal.toLowerCase().replace(/a$/, 'o')}` }),
+          linhas: linhasPrevistoRealizado(pf, p, f, 'despesas', 'dot', campoReal, 'sem dotação') }),
+        `Despesa fixada no orçamento de ${p.ano} (dotação inicial mais créditos adicionais) comparada com a despesa ${nomeReal.toLowerCase()}, fonte por fonte; as três últimas colunas comparam o percentual executado com o dos dois exercícios anteriores. O estágio da despesa realizada acompanha o seletor acima${est === 'dot' ? ' (com "Dotação atualizada" selecionada, usa-se a liquidada)' : ''}. A dotação inclui a reserva do RPPS, que o RREO apresenta fora do total das despesas.`)
+      + secao(`Despesa por órgão – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasOrgao, primeira: `Órgão – ${nomeCampo}` })
         + aviso('<strong>Sobre a despesa por Secretaria (unidade orçamentária):</strong> o SICONFI não publica esse detalhamento. O nível mais fino que o Tesouro divulga é o órgão (Prefeitura, RPPS e Câmara) e, dentro dele, a função e a subfunção de governo, mostradas na tabela seguinte – Saúde, Educação, Assistência Social e as demais áreas correspondem, em linhas gerais, às secretarias. A despesa por unidade orçamentária consta apenas do SICOM/TCE-MG e do sistema contábil da Prefeitura.', 'info'))
-      + secao(`Despesa por função e subfunção – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasFuncao, primeira: `Função e subfunção – despesa ${nomeCampo}` }),
+      + secao(`Despesa por função e subfunção – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasFuncao, primeira: `Função e subfunção – ${nomeCampo}` }),
         'Inclui as despesas intraorçamentárias. Cada função reúne as ações de uma área de governo.')
-      + secao(`Despesa por categoria econômica e grupo – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasGrupo, primeira: `Grupo – despesa ${nomeCampo}` }));
+      + secao(`Despesa por categoria econômica e grupo – ${sufixo}`, tabelaComparativa({ cabecalhos: cab, linhas: linhasGrupo, primeira: `Grupo – ${nomeCampo}` }));
   }
 
   // ---- demonstrativo sem detalhe de fonte (RREO)
@@ -848,6 +901,7 @@ function sobre(el, { p }) {
       <p>Dados deste carregamento obtidos em ${dataHora(p.obtidoEm)}${p.defasado ? ' (parte veio do cache local porque a API não respondeu)' : ''}.</p></div>`)
     + secao('Receitas e despesas por fonte de recursos', `<div class="texto">
       <p>O RREO e o RGF não informam a fonte de recursos. Nas abas <strong>Receitas</strong> e <strong>Despesas</strong>, o filtro de fontes usa a Matriz de Saldos Contábeis (MSC) do mês que encerra o bimestre de referência, na qual cada lançamento traz a fonte, o órgão, a função e a subfunção. Sem filtro, os totais da MSC coincidem com os do RREO.</p>
+      <p>Os quadros <strong>receita prevista × realizada</strong> e <strong>despesa fixada × realizada</strong> comparam, fonte por fonte, o orçamento do exercício de referência com a sua execução e mostram o percentual executado nos três exercícios. A previsão atualizada da receita é a soma da receita a realizar com a realizada, líquida de deduções; a despesa fixada é a dotação atualizada (crédito disponível, indisponível e empenhado), que inclui a reserva do RPPS – por isso seu total supera o do RREO, que a apresenta à parte.</p>
       <p>As fontes seguem a tabela padronizada da Portaria STN nº 710/2021 (consolidada até a Portaria STN/MF nº 1.701/2025). O primeiro dígito do código informado na MSC separa os recursos do exercício corrente dos recursos de exercícios anteriores (superávit financeiro), e também pode ser filtrado.</p>
       <p>O SICONFI não publica a despesa por unidade orçamentária (Secretaria). O maior detalhe institucional disponível é o órgão – Prefeitura, RPPS e Câmara – e, dentro dele, a função e a subfunção de governo.</p></div>`)
     + secao('Comparação entre exercícios', `<div class="texto">

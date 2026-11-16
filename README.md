@@ -43,8 +43,8 @@ Abrir o `index.html` direto do disco não funciona: o navegador exige um endere�
 | Visão geral | Resumo dos apontamentos; **mínimos e limites constitucionais** (educação 25%, saúde 15%, FUNDEB 70%, pessoal, art. 167-A) com memória de cálculo; demais indicadores | RREO, RGF, MSC |
 | Apontamentos TCE-MG | Possíveis apontamentos por severidade, com fundamento, orientação e tendência; exporta CSV e PDF | todos |
 | **Art. 167-A** | Relação despesa corrente / receita corrente em 12 meses, série bimestral, projeção para dezembro | RREO Anexo 01 |
-| Receitas | **Filtro por fonte de recursos**; receita por fonte e por origem; previsão, realização e projeção de encerramento | MSC; RREO Anexo 01 |
-| Despesas | **Filtro por fonte de recursos**; despesa por fonte, por órgão (Prefeitura, RPPS, Câmara), por função e subfunção e por grupo | MSC; RREO Anexos 01 e 02 |
+| Receitas | **Filtro por fonte de recursos**; receita por fonte e por origem; **receita prevista × realizada por fonte**; previsão, realização e projeção de encerramento | MSC; RREO Anexo 01 |
+| Despesas | **Filtro por fonte de recursos**; despesa por fonte, por órgão (Prefeitura, RPPS, Câmara), por função e subfunção e por grupo; **despesa fixada × realizada por fonte** | MSC; RREO Anexos 01 e 02 |
 | RCL | Receita corrente líquida e composição | RREO Anexo 03 |
 | Pessoal | Despesa com pessoal da Prefeitura e da Câmara frente aos limites | RGF Anexo 01 |
 | Dívida e crédito | DCL, operações de crédito, garantias, regra de ouro | RGF Anexos 02 a 04 |

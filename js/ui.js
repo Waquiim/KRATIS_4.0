@@ -110,6 +110,32 @@ export function tabelaComparativa({ linhas, cabecalhos, legenda = '', primeira =
     <tbody>${corpo || '<tr><td colspan="6" class="vazio">Sem dados no SICONFI para este demonstrativo.</td></tr>'}</tbody></table></div>`;
 }
 
+/**
+ * Tabela de previsto × realizado. `colunas`: [{ titulo, sub, tipo }], com tipo 'moeda', 'pct1' ou 'barra'
+ * (percentual com barra de progresso). `linhas`: { secao } ou { rotulo, valores, forte, nivel }; em uma
+ * célula, um texto é exibido como está (ex.: "sem previsão"). Em coluna de barra, `ritmo` (0–100) desenha
+ * o traço da parcela do ano já decorrida.
+ */
+export function tabelaExecucao({ colunas, linhas, primeira = 'Fonte de recursos', legenda = '' }) {
+  const celula = (v, col) => {
+    if (typeof v === 'string') return `<td class="menor">${esc(v)}</td>`;
+    if (col.tipo !== 'barra') return `<td>${formatar(v, col.tipo || 'moeda')}</td>`;
+    if (vazio(v)) return '<td>—</td>';
+    const largura = Math.max(0, Math.min(100, v));
+    const marca = vazio(col.ritmo) ? '' : `<span class="mini-marco" style="left:${Math.min(100, col.ritmo)}%"></span>`;
+    return `<td class="celula-barra"><span class="mini-trilho" aria-hidden="true"><span class="mini-barra" style="width:${largura}%"></span>${marca}</span><span class="mini-valor">${v > 999.9 ? '> 999%' : formatar(v, 'pct1')}</span></td>`;
+  };
+  const corpo = linhas.map(l => {
+    if (l.secao) return `<tr class="secao"><th colspan="${colunas.length + 1}" scope="colgroup">${esc(l.secao)}</th></tr>`;
+    return `<tr class="${l.forte ? 'forte' : ''}"><th scope="row" class="nivel-${l.nivel || 0}">${esc(l.rotulo)}</th>${colunas.map((c, i) => celula(l.valores[i], c)).join('')}</tr>`;
+  }).join('');
+  const cab = colunas.map(c => `<th scope="col">${esc(c.titulo)}${c.sub ? `<small>${esc(c.sub)}</small>` : ''}</th>`).join('');
+  return `<div class="tabela-rolagem"><table class="tabela tabela-execucao">
+    ${legenda ? `<caption>${legenda}</caption>` : ''}
+    <thead><tr><th scope="col">${esc(primeira)}</th>${cab}</tr></thead>
+    <tbody>${corpo || `<tr><td colspan="${colunas.length + 1}" class="vazio">Sem dados no SICONFI para este quadro.</td></tr>`}</tbody></table></div>`;
+}
+
 function classeDelta(a, b) {
   if (vazio(a) || vazio(b) || a === b) return '';
   return a > b ? 'sobe' : 'desce';
